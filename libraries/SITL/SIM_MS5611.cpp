@@ -1,6 +1,7 @@
 #include "SIM_MS5611.h"
 
 #include <SITL/SITL.h>
+#include <AP_Baro/AP_Baro_SITL.h>
 
 #include <stdio.h>
 
@@ -106,19 +107,12 @@ void MS5611::check_conversion_accuracy(float P_Pa, float Temp_C, uint32_t D1, ui
 
 void MS5611::get_pressure_temperature_readings(float &P_Pa, float &Temp_C)
 {
-    float sigma, delta, theta;
-
     float sim_alt = AP::sitl()->state.altitude;
     sim_alt += 2 * rand_float();
 
-    AP_Baro::SimpleAtmosphere(sim_alt * 0.001f, sigma, delta, theta);
-    P_Pa = SSL_AIR_PRESSURE * delta;
-
-    Temp_C = (SSL_AIR_TEMPERATURE * theta - C_TO_KELVIN) + AP::sitl()->temp_board_offset;
-
-    // TO DO add in temperature adjustment by inheritting from AP_Baro_SITL_Generic?
-    // AP_Baro_SITL::temperature_adjustment(P_Pa, Temp_C);
-
-    // TO DO add in wind correction by inheritting from AP_Baro_SITL_Generic?
-    // P_Pa += AP_Baro_SITL::wind_pressure_correction(instance);
+    float p, T;
+    AP_Baro::get_pressure_temperature_for_alt_amsl(sim_alt, p, T);
+    P_Pa = p;
+    Temp_C = T - C_TO_KELVIN;
+    AP_Baro_SITL::temperature_adjustment(p, Temp_C);
 }
