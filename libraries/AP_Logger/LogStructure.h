@@ -658,7 +658,8 @@ struct PACKED log_Scripting {
     char name[16];
     uint32_t run_time;
     int32_t total_mem;
-    int32_t run_mem;
+    int32_t script_mem;
+    int32_t run_allocation;
 };
 
 struct PACKED log_MotBatt {
@@ -1208,7 +1209,8 @@ struct PACKED log_VER {
 // @Field: Name: script name
 // @Field: Runtime: run time
 // @Field: Total_mem: total memory usage of all scripts
-// @Field: Run_mem: run memory usage
+// @Field: mem: memory usage of this script
+// @Field: alloc: memory allocated during this run
 
 // @LoggerMessage: MOTB
 // @Description: Motor mixer information
@@ -1342,7 +1344,7 @@ LOG_STRUCTURE_FROM_VISUALODOM \
       "FILE",   "NIBZ",       "FileName,Offset,Length,Data", "----", "----" }, \
 LOG_STRUCTURE_FROM_AIS \
     { LOG_SCRIPTING_MSG, sizeof(log_Scripting), \
-      "SCR",   "QNIii", "TimeUS,Name,Runtime,Total_mem,Run_mem", "s#sbb", "F-F--", true }, \
+      "SCR",   "QNIiii", "TimeUS,Name,Runtime,Total_mem,mem,alloc", "s#sbbb", "F-F---", true }, \
     { LOG_VER_MSG, sizeof(log_VER), \
       "VER",   "QBHBBBBIZH", "TimeUS,BT,BST,Maj,Min,Pat,FWT,GH,FWS,APJ", "s---------", "F---------", false }, \
     { LOG_MOTBATT_MSG, sizeof(log_MotBatt), \
