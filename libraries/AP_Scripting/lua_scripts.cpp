@@ -35,6 +35,8 @@ char *lua_scripts::error_msg_buf;
 HAL_Semaphore lua_scripts::error_msg_buf_sem;
 uint8_t lua_scripts::print_error_count;
 uint32_t lua_scripts::last_print_ms;
+size_t lua_scripts::allocated;
+size_t lua_scripts::deallocated;
 
 lua_scripts::lua_scripts(const AP_Int32 &vm_steps, const AP_Int32 &heap_size, const AP_Int8 &debug_options, struct AP_Scripting::terminal_s &_terminal)
     : _vm_steps(vm_steps),
@@ -124,22 +126,23 @@ int lua_scripts::atpanic(lua_State *L) {
 }
 
 // helper for print and log of runtime stats
-void lua_scripts::update_stats(const char *name, uint32_t run_time, int total_mem, int run_mem)
+void lua_scripts::update_stats(const char *name, uint32_t run_time, int total_mem, int script_mem, int run_allocation)
 {
     if ((_debug_options.get() & uint8_t(DebugLevel::RUNTIME_MSG)) != 0) {
         gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Time: %u Mem: %d + %d",
                                             (unsigned int)run_time,
-                                            (int)total_mem,
-                                            (int)run_mem);
+                                            (int)script_mem,
+                                            (int)run_allocation);
     }
     if ((_debug_options.get() & uint8_t(DebugLevel::LOG_RUNTIME)) != 0) {
         struct log_Scripting pkt {
             LOG_PACKET_HEADER_INIT(LOG_SCRIPTING_MSG),
-            time_us      : AP_HAL::micros64(),
-            name         : {},
-            run_time     : run_time,
-            total_mem    : total_mem,
-            run_mem      : run_mem
+            time_us        : AP_HAL::micros64(),
+            name           : {},
+            run_time       : run_time,
+            total_mem      : total_mem,
+            script_mem     : script_mem,
+            run_allocation : run_allocation
         };
         const char * name_short = strrchr(name, '/');
         if ((strlen(name) > sizeof(pkt.name)) && (name_short != nullptr)) {
@@ -152,6 +155,13 @@ void lua_scripts::update_stats(const char *name, uint32_t run_time, int total_me
 }
 
 lua_scripts::script_info *lua_scripts::load_script(lua_State *L, char *filename) {
+#if defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
+    const int startMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+    if ((allocated != 0) || (deallocated != 0)) {
+        AP_HAL::panic("Lua: unexpected memory use in load");
+    }
+#endif
+
     if (int error = luaL_loadfile(L, filename)) {
         switch (error) {
             case LUA_ERRSYNTAX:
@@ -173,7 +183,6 @@ lua_scripts::script_info *lua_scripts::load_script(lua_State *L, char *filename)
         }
     }
 
-    const int loadMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
     const uint32_t loadStart = AP_HAL::micros();
 
     script_info *new_script = (script_info *)_heap.allocate(sizeof(script_info));
@@ -188,14 +197,22 @@ lua_scripts::script_info *lua_scripts::load_script(lua_State *L, char *filename)
     create_sandbox(L);
     lua_setupvalue(L, -2, 1);
 
-    const uint32_t loadEnd = AP_HAL::micros();
-    const int endMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
-
-    update_stats(filename, loadEnd-loadStart, endMem, loadMem);
-
     new_script->name = filename;
     new_script->lua_ref = luaL_ref(L, LUA_REGISTRYINDEX);   // cache the reference
     new_script->next_run_ms = AP_HAL::millis64() - 1; // force the script to be stale
+
+    const uint32_t loadEnd = AP_HAL::micros();
+    const int endMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+
+    const int loadMem = allocated - deallocated;
+    new_script->memory = loadMem;
+    update_stats(filename, loadEnd-loadStart, endMem, loadMem, allocated);
+
+#if defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
+    if ((endMem - startMem) != loadMem) {
+        AP_HAL::panic("Lua: load memory does not match");
+    }
+#endif
 
     return new_script;
 }
@@ -265,6 +282,11 @@ void lua_scripts::load_all_scripts_in_dir(lua_State *L, const char *dirname) {
 
         // we have something that looks like a lua file, attempt to load it
         script_info * script = load_script(L, filename);
+
+        // Clear memory totals to measure the next load
+        allocated = 0;
+        deallocated = 0;
+
         if (script == nullptr) {
             _heap.deallocate(filename);
             continue;
@@ -430,7 +452,20 @@ MultiHeap lua_scripts::_heap;
 
 void *lua_scripts::alloc(void *ud, void *ptr, size_t osize, size_t nsize) {
     (void)ud; /* not used */
-    return _heap.change_size(ptr, osize, nsize);
+    const bool nullprt_in = ptr == nullptr;
+    void * ret = _heap.change_size(ptr, osize, nsize);
+
+    // Track memory usage
+    if ((ret != nullptr) || (nsize == 0)) {
+        allocated += nsize;
+        if (!nullprt_in) {
+            // If old object is nullptr the old size should always be zero
+            // This is not always the case....
+            deallocated += osize;
+        }
+    }
+
+    return ret;
 }
 
 void lua_scripts::repl_cleanup (void) {
@@ -444,10 +479,15 @@ void lua_scripts::repl_cleanup (void) {
             AP::FS().unlink(REPL_DIRECTORY);
         }
     }
+    // Reset memory counters
+    allocated = 0;
+    deallocated = 0;
 }
 
 void lua_scripts::run(void) {
     bool succeeded_initial_load = false;
+    allocated = 0;
+    deallocated = 0;
 
     if (!_heap.available()) {
         gcs().send_text(MAV_SEVERITY_INFO, "Lua: Unable to allocate a heap");
@@ -486,8 +526,16 @@ void lua_scripts::run(void) {
     lua_atpanic(L, atpanic);
     load_generated_bindings(L);
 
+    const int loaded_mem = allocated - deallocated;
+    allocated = 0;
+    deallocated = 0;
+
+#if defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
+    if (loaded_mem != (lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0))) {
+        AP_HAL::panic("Lua: state memory calc does not match");
+    }
+#endif
 #ifndef HAL_CONSOLE_DISABLED
-    const int loaded_mem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
     DEV_PRINTF("Lua: State memory usage: %i + %i\n", inital_mem, loaded_mem - inital_mem);
 #endif
 
@@ -522,53 +570,85 @@ void lua_scripts::run(void) {
         if (lua_gettop(L) != 0) {
             AP_HAL::panic("Lua: Stack should be empty before running scripts");
         }
+        if ((allocated != 0) || (deallocated != 0)) {
+            AP_HAL::panic("Lua: unexpected memory use in loop");
+        }
 #endif // defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
 
         if (scripts != nullptr) {
 #if defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
-              // Sanity check that the scripts list is ordered correctly
-              script_info *sanity = scripts;
-              while (sanity->next != nullptr) {
-                  if (sanity->next_run_ms > sanity->next->next_run_ms) {
-                      AP_HAL::panic("Lua: Script tasking order has been violated");
-                  }
-                  sanity = sanity->next;
-              }
+            // Sanity check that the scripts list is ordered correctly
+            // Check total memory adds up
+            script_info *sanity = scripts;
+            int total_mem = loaded_mem + sanity->memory;
+            while (sanity->next != nullptr) {
+                if (sanity->next_run_ms > sanity->next->next_run_ms) {
+                    AP_HAL::panic("Lua: Script tasking order has been violated");
+                }
+                sanity = sanity->next;
+                total_mem += sanity->memory;
+            }
+            const int lua_total_mem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+            if ((allocated != 0) || (deallocated != 0)) {
+                AP_HAL::panic("Lua: unexpected memory use in total");
+            }
+            if (total_mem != lua_total_mem) {
+                AP_HAL::panic("Lua: total memory sum error (%i vs %i)", total_mem, lua_total_mem);
+            }
 #endif // defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
+
+            script_info *script_to_run = scripts;
 
             // compute delay time
             uint64_t now_ms = AP_HAL::millis64();
-            if (now_ms < scripts->next_run_ms) {
-                hal.scheduler->delay(scripts->next_run_ms - now_ms);
+            if (now_ms < script_to_run->next_run_ms) {
+                hal.scheduler->delay(script_to_run->next_run_ms - now_ms);
             }
 
             if ((_debug_options.get() & uint8_t(DebugLevel::RUNTIME_MSG)) != 0) {
-                gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Running %s", scripts->name);
+                gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Running %s", script_to_run->name);
             }
-            // copy name for logging, cant do it after as script reschedule moves the pointers
-            const char * script_name = scripts->name;
 
 #if DISABLE_INTERRUPTS_FOR_SCRIPT_RUN
             void *istate = hal.scheduler->disable_interrupts_save();
 #endif
-
+#if defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
             const int startMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+#endif
             const uint32_t loadEnd = AP_HAL::micros();
 
             run_next_script(L);
 
-            const uint32_t runEnd = AP_HAL::micros();
+#if defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
+            int MidMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+            if ((MidMem - startMem) != int(allocated - deallocated)) {
+                AP_HAL::panic("Lua: mid memory calc does not match");
+            }
+#endif
+
+            // garbage collect after each script, this shouldn't matter, but seems to resolve a memory leak
+            lua_gc(L, LUA_GCCOLLECT, 0);
+
             const int endMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+#if defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
+            if ((endMem - startMem) != int(allocated - deallocated)) {
+                AP_HAL::panic("Lua: end memory calc does not match");
+            }
+#endif
+
+            const uint32_t runEnd = AP_HAL::micros();
 
 #if DISABLE_INTERRUPTS_FOR_SCRIPT_RUN
             hal.scheduler->restore_interrupts(istate);
 #endif
 
-            update_stats(script_name, runEnd - loadEnd, endMem, endMem - startMem);
+            script_to_run->memory += allocated - deallocated;
 
+            update_stats(script_to_run->name, runEnd - loadEnd, endMem, script_to_run->memory, allocated);
 
-            // garbage collect after each script, this shouldn't matter, but seems to resolve a memory leak
-            lua_gc(L, LUA_GCCOLLECT, 0);
+            // Re-zero count for next script
+            allocated = 0;
+            deallocated = 0;
 
         } else {
             if ((_debug_options.get() & uint8_t(DebugLevel::NO_SCRIPTS_TO_RUN)) != 0) {
