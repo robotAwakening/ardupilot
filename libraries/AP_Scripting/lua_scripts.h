@@ -65,6 +65,7 @@ private:
        int lua_ref;          // reference to the loaded script object
        uint64_t next_run_ms; // time (in milliseconds) the script should next be run at
        char *name;           // filename for the script // FIXME: This information should be available from Lua
+       size_t memory;        // Amount of memory being used by this script
        script_info *next;
     } script_info;
 
@@ -115,7 +116,7 @@ private:
     static MultiHeap _heap;
 
     // helper for print and log of runtime stats
-    void update_stats(const char *name, uint32_t run_time, int total_mem, int run_mem);
+    void update_stats(const char *name, uint32_t run_time, int total_mem, int script_mem, int run_allocation);
 
     // must be static for use in atpanic
     static void print_error(MAV_SEVERITY severity);
@@ -123,6 +124,8 @@ private:
     static HAL_Semaphore error_msg_buf_sem;
     static uint8_t print_error_count;
     static uint32_t last_print_ms;
+    static size_t allocated;
+    static size_t deallocated;
     int current_ref;
 
 public:
