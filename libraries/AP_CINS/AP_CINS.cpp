@@ -24,6 +24,7 @@
 #define CINS_INITIAL_PITCH 0
 #define CINS_INITIAL_YAW 0
 
+#pragma GCC diagnostic error "-Wframe-larger-than=2000"
 
 /*
   initialise the filter
@@ -95,6 +96,7 @@ void AP_CINS::update(void)
     // update_yaw_from_compass();
     update_attitude_from_compass();
 
+#if HAL_LOGGING_ENABLED
     // @LoggerMessage: CINS
     // @Description: CINS state
     // @Field: TimeUS: Time since system startup
@@ -131,6 +133,7 @@ void AP_CINS::update(void)
                                 loc.lat,
                                 loc.lng,
                                 loc.alt*0.01);
+#endif // LOGGING_ENABLED
 }
 
 
