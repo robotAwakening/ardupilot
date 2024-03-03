@@ -15,7 +15,7 @@
 #include "sensor_msgs/msg/Joy.h"
 #include "geometry_msgs/msg/PoseStamped.h"
 #include "geometry_msgs/msg/TwistStamped.h"
-#include "/msg/GeoPoseStamped.h"
+#include "geographic_msgs/msg/GeoPoseStamped.h"
 #include "rosgraph_msgs/msg/Clock.h"
 
 #include <AP_HAL/AP_HAL.h>
