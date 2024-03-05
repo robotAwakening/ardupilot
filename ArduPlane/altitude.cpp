@@ -189,6 +189,7 @@ void Plane::set_target_altitude_current(void)
         target_altitude.terrain_following = false;        
     }
 #endif
+    altitude_error_cm = calc_altitude_error_cm();
 }
 
 /*
@@ -200,6 +201,7 @@ void Plane::set_target_altitude_current_adjusted(void)
 
     // use adjusted_altitude_cm() to take account of ALTITUDE_OFFSET
     target_altitude.amsl_cm = adjusted_altitude_cm();
+    altitude_error_cm =  calc_altitude_error_cm();
 }
 
 /*
@@ -235,6 +237,7 @@ void Plane::set_target_altitude_location(const Location &loc)
         target_altitude.terrain_following = false;
     }
 #endif
+    altitude_error_cm = calc_altitude_error_cm();
 }
 
 /*
@@ -278,6 +281,7 @@ void Plane::change_target_altitude(int32_t change_cm)
         target_altitude.terrain_alt_cm += change_cm;
     }
 #endif
+    altitude_error_cm += change_cm;
 }
 /*
   change target altitude by a proportion of the target altitude offset
@@ -319,6 +323,7 @@ void Plane::constrain_target_altitude_location(const Location &loc1, const Locat
     } else {
         target_altitude.amsl_cm = constrain_int32(target_altitude.amsl_cm, loc1.alt, loc2.alt);
     }
+    altitude_error_cm = calc_altitude_error_cm();
 }
 
 /*
@@ -379,6 +384,7 @@ void Plane::check_fbwb_altitude(void)
         if (should_check_min) {
             target_altitude.terrain_alt_cm = MAX(target_altitude.terrain_alt_cm, min_alt_cm);
         }
+        altitude_error_cm = calc_altitude_error_cm();
         return;
     }
 #endif
@@ -389,6 +395,7 @@ void Plane::check_fbwb_altitude(void)
     if (should_check_min) {
         target_altitude.amsl_cm = MAX(target_altitude.amsl_cm, home.alt + min_alt_cm);
     }
+    altitude_error_cm = calc_altitude_error_cm();
 }
 
 /*
