@@ -91,6 +91,7 @@ public:
         k_param_serial_options,
         k_param_relay,
         k_param_temperature_msg_rate,
+        k_param_rpm_msg_rate,
     };
 
     AP_Int16 format_version;
@@ -207,6 +208,10 @@ public:
 
 #ifdef HAL_PERIPH_ENABLE_DEVICE_TEMPERATURE
     AP_Int8 temperature_msg_rate;
+#endif
+
+#ifdef HAL_PERIPH_ENABLE_RPM_STREAM
+    AP_Int8 rpm_msg_rate;
 #endif
 
 #if HAL_CANFD_SUPPORTED
