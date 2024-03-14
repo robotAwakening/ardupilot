@@ -34,9 +34,11 @@ public:
     AP_Int8  esc_telem_outbound_index;
 #endif
 #ifdef HAL_PERIPH_ENABLE_RPM_STREAM
-    AP_Int8 dronecan_sensor_id;
+    AP_Int8 dronecan_send_sensor_id;
 #endif
-
+#if AP_RPM_DRONECAN_ENABLED
+    AP_Int8 dronecan_receive_sensor_id;
+#endif
     static const struct AP_Param::GroupInfo var_info[];
 
 };
