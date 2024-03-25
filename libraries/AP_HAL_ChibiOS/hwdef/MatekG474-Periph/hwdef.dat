@@ -1,11 +1,5 @@
 include ../MatekG474/hwdef.inc
 
-# ----------- ADC
-define HAL_USE_ADC FALSE
-define STM32_ADC_USE_ADC1 FALSE
-define HAL_DISABLE_ADC_DRIVER TRUE
-
-
 # ----------- GPS
 define HAL_PERIPH_ENABLE_GPS
 define GPS_MAX_RATE_MS 200
@@ -72,15 +66,3 @@ define HAL_PROXIMITY_ENABLED 1
 # ----------- rangefinder
 define HAL_PERIPH_ENABLE_RANGEFINDER
 
-# some lidars take a long time to init, keep probing till we find it
-define AP_PERIPH_PROBE_CONTINUOUS 1
-
-
-# ----------- PWM
-
-# enable ESC control
-define HAL_SUPPORT_RCOUT_SERIAL 1
-define HAL_WITH_ESC_TELEM 1
-
-define HAL_PERIPH_ENABLE_RC_OUT
-define HAL_PERIPH_ENABLE_NOTIFY
