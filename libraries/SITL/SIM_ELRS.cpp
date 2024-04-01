@@ -78,6 +78,8 @@ void ELRS::update()
         if (len > mavlinkInputBuffer.space()) {
             // Clear if data will not fit, this matches ELRS FIFO behaviour
             mavlinkInputBuffer.clear();
+            input_clear_count++;
+            ::fprintf(stderr, "ELRS input buffer cleared (%u)\n", input_clear_count);
         }
         mavlinkInputBuffer.write(buf, len);
     }
@@ -97,6 +99,8 @@ void ELRS::update()
         const uint32_t len = uart->read(buf, output_bytes);
         if (len > mavlinkOutputBuffer.space()) {
             mavlinkOutputBuffer.clear();
+            output_clear_count++;
+            ::fprintf(stderr, "ELRS output buffer cleared (%u)\n", output_clear_count);
         }
         mavlinkOutputBuffer.write(buf, len);
     }

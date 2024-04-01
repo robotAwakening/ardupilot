@@ -43,6 +43,11 @@ private:
     // Air data rate limits in bytes per second
     const float input_data_rate;
     const float output_data_rate;
+
+    // Count number of times buffers are cleared, reporting only
+    uint32_t input_clear_count;
+    uint32_t output_clear_count;
+
 };
 
 }
