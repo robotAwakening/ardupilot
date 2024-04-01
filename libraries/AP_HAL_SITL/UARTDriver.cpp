@@ -56,19 +56,25 @@ bool UARTDriver::_console;
 
 /* UARTDriver method implementations */
 
+// Populate path and call main begin function
 void UARTDriver::_begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
+{
+    if (_portNumber >= ARRAY_SIZE(_sitlState->_serial_path)) {
+        AP_HAL::panic("port number out of range; you may need to extend _sitlState->_serial_path");
+    }
+
+    const char *path = _sitlState->_serial_path[_portNumber];
+    begin(baud, rxSpace, txSpace, path);
+}
+
+// begin with custom path
+void UARTDriver::begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace, const char* path)
 {
     if (baud == 0 && rxSpace == 0 && txSpace == 0) {
         // this is a claim of the uart for the current thread, which
         // is currently not implemented in SITL
         return;
     }
-
-    if (_portNumber >= ARRAY_SIZE(_sitlState->_serial_path)) {
-        AP_HAL::panic("port number out of range; you may need to extend _sitlState->_serial_path");
-    }
-
-    const char *path = _sitlState->_serial_path[_portNumber];
 
     if (baud != 0) {
         _uart_baudrate = baud;
@@ -77,11 +83,11 @@ void UARTDriver::_begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
     if (strcmp(path, "GPS1") == 0) {
         /* gps */
         _connected = true;
-        _sim_serial_device = _sitlState->create_serial_sim("gps:1", "");
+        _sim_serial_device = _sitlState->create_serial_sim("gps:1", "", _portNumber);
     } else if (strcmp(path, "GPS2") == 0) {
         /* 2nd gps */
         _connected = true;
-        _sim_serial_device = _sitlState->create_serial_sim("gps:2", "");
+        _sim_serial_device = _sitlState->create_serial_sim("gps:2", "", _portNumber);
     } else {
         /* parse type:args:flags string for path. 
            For example:
@@ -109,7 +115,7 @@ void UARTDriver::_begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
             // add sanity check here that we're doing mavlink on this port?
             ::printf("SIM-ADSB connection on SERIAL%u\n", _portNumber);
             _connected = true;
-            _sim_serial_device = _sitlState->create_serial_sim("adsb", nullptr);
+            _sim_serial_device = _sitlState->create_serial_sim("adsb", nullptr, _portNumber);
         } else
 #endif
         if (strcmp(devtype, "tcp") == 0) {
@@ -132,7 +138,7 @@ void UARTDriver::_begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
             if (!_connected) {
                 ::printf("SIM connection %s:%s on SERIAL%u\n", args1, args2, _portNumber);
                 _connected = true;
-                _sim_serial_device = _sitlState->create_serial_sim(args1, args2);
+                _sim_serial_device = _sitlState->create_serial_sim(args1, args2, _portNumber);
             }
         } else if (strcmp(devtype, "udpclient") == 0) {
             // udp client connection
@@ -191,7 +197,7 @@ void UARTDriver::_begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
     }
 
     if (_sim_serial_device != nullptr) {
-        _sim_serial_device->set_autopilot_baud(baud);
+        _sim_serial_device->begin(baud, rxSpace, txSpace, path);
     }
 
     if (hal.console != this) { // don't clear USB buffers (allows early startup messages to escape)
@@ -962,6 +968,10 @@ void UARTDriver::_timer_tick(void)
 {
     handle_writing_from_writebuffer_to_device();
     handle_reading_from_device_to_readbuffer();
+
+    if (_sim_serial_device != nullptr) {
+        _sim_serial_device->uart_timer_tick();
+    }
 }
 
 

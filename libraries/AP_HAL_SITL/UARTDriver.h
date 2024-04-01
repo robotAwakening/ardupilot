@@ -73,6 +73,9 @@ public:
     void uart_info(ExpandingString &str, StatsTracker &stats, const uint32_t dt_ms) override;
 #endif
 
+    // Begin with custom path
+    void begin(uint32_t b, uint16_t rxS, uint16_t txS, const char* path);
+
 private:
 
     int _fd;
