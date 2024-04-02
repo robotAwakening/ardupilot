@@ -19,13 +19,13 @@ using namespace SITL;
 
 ELRS::ELRS(const uint8_t portNumber, HALSITL::SITL_State_Common *sitl_state) :
     // Mirror typical ELRS UART buffer sizes
-    SerialDevice::SerialDevice(128, 64),
+    SerialDevice::SerialDevice(64, 128),
     // Mirror MAVLink buffer sizes
     mavlinkInputBuffer(2048),
     mavlinkOutputBuffer(2048),
-    // 200Hz 1:2 -> 2000bps none burst and 3922bps burst -> 200 B/s to 392B/s
-    input_data_rate(392),
-    output_data_rate(392),
+    // Typical setup is about 500 B /s
+    input_data_rate(500),
+    output_data_rate(500),
     // 255 is typically used by the GCS, for RC override to work in ArduPilot `SYSID_MYGCS` must be set to this value (255 is the default)
     this_system_id(255),
     // Strictly this is not a valid source component ID
@@ -69,39 +69,26 @@ void ELRS::update()
     uart->_timer_tick();
 
     // Read from AP into radio
-    while (true) {
-        uint8_t buf[64];
-        ssize_t len = read_from_autopilot((char*)buf, sizeof(buf));
-        if (len == 0) {
-            break;
-        }
-        if (len > mavlinkInputBuffer.space()) {
-            // Clear if data will not fit, this matches ELRS FIFO behaviour
-            mavlinkInputBuffer.clear();
-            input_clear_count++;
-            ::fprintf(stderr, "ELRS input buffer cleared (%u)\n", input_clear_count);
-        }
+    const uint32_t input_space = mavlinkInputBuffer.space();
+    if (input_space > 0) {
+        uint8_t buf[input_space];
+        ssize_t len = read_from_autopilot((char*)buf, input_space);
         mavlinkInputBuffer.write(buf, len);
     }
 
     // Send from radio to GCS
-    const uint32_t input_bytes = input_limit.max_bytes(input_data_rate);
-    if (input_bytes > 0) {
-        uint8_t buf[input_bytes];
-        const uint32_t len = mavlinkInputBuffer.read(buf, input_bytes);
+    const uint32_t send_bytes = input_limit.max_bytes(input_data_rate);
+    if (send_bytes > 0) {
+        uint8_t buf[send_bytes];
+        const uint32_t len = mavlinkInputBuffer.read(buf, send_bytes);
         uart->write(buf, len);
     }
 
     // Incoming data from GCS to radio
-    const uint32_t output_bytes = output_limit.max_bytes(output_data_rate);
-    if (output_bytes > 0) {
-        uint8_t buf[output_bytes];
-        const uint32_t len = uart->read(buf, output_bytes);
-        if (len > mavlinkOutputBuffer.space()) {
-            mavlinkOutputBuffer.clear();
-            output_clear_count++;
-            ::fprintf(stderr, "ELRS output buffer cleared (%u)\n", output_clear_count);
-        }
+    const uint32_t receive_bytes = output_limit.max_bytes(output_data_rate);
+    if (receive_bytes > 0) {
+        uint8_t buf[receive_bytes];
+        const uint32_t len = uart->read(buf, receive_bytes);
         mavlinkOutputBuffer.write(buf, len);
     }
 
