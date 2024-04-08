@@ -236,6 +236,9 @@ protected:
     // Update _heliflags.rotor_runup_complete value writing log event on state change
     void set_rotor_runup_complete(bool new_value);
 
+    // Returns the scaling value required to convert the collective angle parameters into the cyclic-output-to-angle conversion
+    float get_cyclic_angle_scaler(void) const;
+
     // enum values for HOVER_LEARN parameter
     enum HoverLearn {
         HOVER_LEARN_DISABLED = 0,
