@@ -15,6 +15,9 @@
 
 // Example command: -A --serial2=sim:ELRS:tcp:3
 
+// Baud rate must be set correctly
+// param set SERIAL2_BAUD 460
+
 using namespace SITL;
 
 ELRS::ELRS(const uint8_t portNumber, HALSITL::SITL_State_Common *sitl_state) :
@@ -24,8 +27,8 @@ ELRS::ELRS(const uint8_t portNumber, HALSITL::SITL_State_Common *sitl_state) :
     mavlinkInputBuffer(2048),
     mavlinkOutputBuffer(2048),
     // Typical setup is about 500 B /s
-    input_data_rate(500),
-    output_data_rate(500),
+    input_data_rate(500*5),
+    output_data_rate(500*5),
     // 255 is typically used by the GCS, for RC override to work in ArduPilot `SYSID_MYGCS` must be set to this value (255 is the default)
     this_system_id(255),
     // Strictly this is not a valid source component ID
@@ -154,7 +157,10 @@ void ELRS::sendQueuedData()
             // Forward message to the UART
             uint8_t buf[MAVLINK_MAX_PACKET_LEN];
             uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-            write_to_autopilot((char*)buf, len);
+            uint16_t written = write_to_autopilot((char*)buf, len);
+            if ((written != uint16_t(-1)) && (len != written)) {
+                ::fprintf(stderr, "Failed to write full msg, wanted %u achieved %u (msg id: %u)\n", len, written, msg.msgid);
+            }
         }
     }
 
