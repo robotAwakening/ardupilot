@@ -101,6 +101,22 @@ AP_AHRS_DCM::update()
 
     // remember the last origin for fallback support
     IGNORE_RETURN(AP::ahrs().get_origin(last_origin));
+
+#if HAL_LOGGING_ENABLED
+    const uint32_t now_ms = AP_HAL::millis();
+    if (now_ms - last_log_ms >= 100) {
+        // log DCM at 10Hz
+        last_log_ms = now_ms;
+        AP::logger().WriteStreaming("DCM", "TimeUS,Roll,Pitch,Yaw",
+                                    "sddd",
+                                    "F000",
+                                    "Qfff",
+                                    AP_HAL::micros64(),
+                                    degrees(roll),
+                                    degrees(pitch),
+                                    wrap_360(degrees(yaw)));
+    }
+#endif // HAL_LOGGING_ENABLED
 }
 
 void AP_AHRS_DCM::get_results(AP_AHRS_Backend::Estimates &results)
@@ -271,7 +287,7 @@ AP_AHRS_DCM::renorm(Vector3f const &a, Vector3f &result)
     // additional error buildup.
 
     // Note that we can get significant renormalisation values
-    // when we have a larger delta_t due to a glitch eleswhere in
+    // when we have a larger delta_t due to a glitch elsewhere in
     // APM, such as a I2c timeout or a set of EEPROM writes. While
     // we would like to avoid these if possible, if it does happen
     // we don't want to compound the error by making DCM less
@@ -428,7 +444,7 @@ bool AP_AHRS_DCM::use_compass(void)
         return false;
     }
     if (!AP::ahrs().get_fly_forward() || !have_gps()) {
-        // we don't have any alterative to the compass
+        // we don't have any alternative to the compass
         return true;
     }
     if (AP::gps().ground_speed() < GPS_SPEED_MIN) {
@@ -463,7 +479,7 @@ bool AP_AHRS_DCM::get_quaternion(Quaternion &quat) const
 }
 
 // yaw drift correction using the compass or GPS
-// this function prodoces the _omega_yaw_P vector, and also
+// this function produces the _omega_yaw_P vector, and also
 // contributes to the _omega_I.z long term yaw drift estimate
 void
 AP_AHRS_DCM::drift_correction_yaw(void)
@@ -573,8 +589,8 @@ AP_AHRS_DCM::drift_correction_yaw(void)
     // that depends on the spin rate. See the fastRotations.pdf
     // paper from Bill Premerlani
     // We also adjust the gain depending on the rate of change of horizontal velocity which
-    // is proportional to how observable the heading is from the acceerations and GPS velocity
-    // The accelration derived heading will be more reliable in turns than compass or GPS
+    // is proportional to how observable the heading is from the accelerations and GPS velocity
+    // The acceleration derived heading will be more reliable in turns than compass or GPS
 
     _omega_yaw_P.z = error_z * _P_gain(spin_rate) * _kp_yaw * _yaw_gain();
     if (use_fast_gains()) {
@@ -1061,7 +1077,7 @@ bool AP_AHRS_DCM::airspeed_estimate(float &airspeed_ret) const
 bool AP_AHRS_DCM::airspeed_estimate(uint8_t airspeed_index, float &airspeed_ret) const
 {
     // airspeed_ret: will always be filled-in by get_unconstrained_airspeed_estimate which fills in airspeed_ret in this order:
-    //               airspeed as filled-in by an enabled airsped sensor
+    //               airspeed as filled-in by an enabled airspeed sensor
     //               if no airspeed sensor: airspeed estimated using the GPS speed & wind_speed_estimation
     //               Or if none of the above, fills-in using the previous airspeed estimate
     // Return false: if we are using the previous airspeed estimate
@@ -1085,7 +1101,7 @@ bool AP_AHRS_DCM::airspeed_estimate(uint8_t airspeed_index, float &airspeed_ret)
 }
 
 // airspeed_ret: will always be filled-in by get_unconstrained_airspeed_estimate which fills in airspeed_ret in this order:
-//               airspeed as filled-in by an enabled airsped sensor
+//               airspeed as filled-in by an enabled airspeed sensor
 //               if no airspeed sensor: airspeed estimated using the GPS speed & wind_speed_estimation
 //               Or if none of the above, fills-in using the previous airspeed estimate
 // Return false: if we are using the previous airspeed estimate
@@ -1205,11 +1221,14 @@ Vector2f AP_AHRS_DCM::groundspeed_vector(void)
 bool AP_AHRS_DCM::get_vert_pos_rate_D(float &velocity) const
 {
     Vector3f velned;
-    if (!get_velocity_NED(velned)) {
-        return false;
+    if (get_velocity_NED(velned)) {
+        velocity = velned.z;
+        return true;
+    } else if (AP::baro().healthy()) {
+        velocity = -AP::baro().get_climb_rate();
+        return true;
     }
-    velocity = velned.z;
-    return true;
+    return false;
 }
 
 // returns false if we fail arming checks, in which case the buffer will be populated with a failure message

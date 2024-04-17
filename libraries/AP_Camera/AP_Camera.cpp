@@ -279,14 +279,14 @@ void AP_Camera::handle_message(mavlink_channel_t chan, const mavlink_message_t &
 }
 
 // handle command_long mavlink messages
-MAV_RESULT AP_Camera::handle_command_long(const mavlink_command_long_t &packet)
+MAV_RESULT AP_Camera::handle_command(const mavlink_command_int_t &packet)
 {
     switch (packet.command) {
     case MAV_CMD_DO_DIGICAM_CONFIGURE:
-        configure(packet.param1, packet.param2, packet.param3, packet.param4, packet.param5, packet.param6, packet.param7);
+        configure(packet.param1, packet.param2, packet.param3, packet.param4, packet.x, packet.y, packet.z);
         return MAV_RESULT_ACCEPTED;
     case MAV_CMD_DO_DIGICAM_CONTROL:
-        control(packet.param1, packet.param2, packet.param3, packet.param4, packet.param5, packet.param6);
+        control(packet.param1, packet.param2, packet.param3, packet.param4, packet.x, packet.y);
         return MAV_RESULT_ACCEPTED;
     case MAV_CMD_DO_SET_CAM_TRIGG_DIST:
         set_trigger_distance(packet.param1);
@@ -324,6 +324,29 @@ MAV_RESULT AP_Camera::handle_command_long(const mavlink_command_long_t &packet)
             break;
         }
         return MAV_RESULT_DENIED;
+
+#if AP_CAMERA_SET_CAMERA_SOURCE_ENABLED
+    case MAV_CMD_SET_CAMERA_SOURCE:
+        // sanity check instance
+        if (is_negative(packet.param1) || packet.param1 > AP_CAMERA_MAX_INSTANCES) {
+            return MAV_RESULT_DENIED;
+        }
+        if (is_zero(packet.param1)) {
+            // set camera source for all backends
+            bool accepted = false;
+            for (uint8_t i = 0; i < ARRAY_SIZE(_backends); i++) {
+                if (_backends[i] != nullptr) {
+                    accepted |= set_camera_source(i, (AP_Camera::CameraSource)packet.param2, (AP_Camera::CameraSource)packet.param3);
+                }
+            }
+            return accepted ? MAV_RESULT_ACCEPTED : MAV_RESULT_DENIED;
+        }
+        if (set_camera_source(packet.param1-1, (AP_Camera::CameraSource)packet.param2, (AP_Camera::CameraSource)packet.param3)) {
+            return MAV_RESULT_ACCEPTED;
+        }
+        return MAV_RESULT_DENIED;
+#endif
+
     case MAV_CMD_IMAGE_START_CAPTURE:
         // param1 : camera id
         // param2 : interval (in seconds)
@@ -438,7 +461,7 @@ void AP_Camera::cam_mode_toggle(uint8_t instance)
 }
 
 // configure camera
-void AP_Camera::configure(float shooting_mode, float shutter_speed, float aperture, float ISO, float exposure_type, float cmd_id, float engine_cutoff_time)
+void AP_Camera::configure(float shooting_mode, float shutter_speed, float aperture, float ISO, int32_t exposure_type, int32_t cmd_id, float engine_cutoff_time)
 {
     WITH_SEMAPHORE(_rsem);
 
@@ -448,7 +471,7 @@ void AP_Camera::configure(float shooting_mode, float shutter_speed, float apertu
     primary->configure(shooting_mode, shutter_speed, aperture, ISO, exposure_type, cmd_id, engine_cutoff_time);
 }
 
-void AP_Camera::configure(uint8_t instance, float shooting_mode, float shutter_speed, float aperture, float ISO, float exposure_type, float cmd_id, float engine_cutoff_time)
+void AP_Camera::configure(uint8_t instance, float shooting_mode, float shutter_speed, float aperture, float ISO, int32_t exposure_type, int32_t cmd_id, float engine_cutoff_time)
 {
     WITH_SEMAPHORE(_rsem);
 
@@ -462,7 +485,7 @@ void AP_Camera::configure(uint8_t instance, float shooting_mode, float shutter_s
 }
 
 // handle camera control
-void AP_Camera::control(float session, float zoom_pos, float zoom_step, float focus_lock, float shooting_cmd, float cmd_id)
+void AP_Camera::control(float session, float zoom_pos, float zoom_step, float focus_lock, int32_t shooting_cmd, int32_t cmd_id)
 {
     WITH_SEMAPHORE(_rsem);
 
@@ -472,7 +495,7 @@ void AP_Camera::control(float session, float zoom_pos, float zoom_step, float fo
     primary->control(session, zoom_pos, zoom_step, focus_lock, shooting_cmd, cmd_id);
 }
 
-void AP_Camera::control(uint8_t instance, float session, float zoom_pos, float zoom_step, float focus_lock, float shooting_cmd, float cmd_id)
+void AP_Camera::control(uint8_t instance, float session, float zoom_pos, float zoom_step, float focus_lock, int32_t shooting_cmd, int32_t cmd_id)
 {
     WITH_SEMAPHORE(_rsem);
 
@@ -522,6 +545,34 @@ void AP_Camera::send_camera_settings(mavlink_channel_t chan)
     for (uint8_t instance = 0; instance < AP_CAMERA_MAX_INSTANCES; instance++) {
         if (_backends[instance] != nullptr) {
             _backends[instance]->send_camera_settings(chan);
+        }
+    }
+}
+
+#if AP_CAMERA_SEND_FOV_STATUS_ENABLED
+// send camera field of view status
+void AP_Camera::send_camera_fov_status(mavlink_channel_t chan)
+{
+    WITH_SEMAPHORE(_rsem);
+
+    // call each instance
+    for (uint8_t instance = 0; instance < AP_CAMERA_MAX_INSTANCES; instance++) {
+        if (_backends[instance] != nullptr) {
+            _backends[instance]->send_camera_fov_status(chan);
+        }
+    }
+}
+#endif
+
+// send camera capture status message to GCS
+void AP_Camera::send_camera_capture_status(mavlink_channel_t chan)
+{
+    WITH_SEMAPHORE(_rsem);
+
+    // call each instance
+    for (uint8_t instance = 0; instance < AP_CAMERA_MAX_INSTANCES; instance++) {
+        if (_backends[instance] != nullptr) {
+            _backends[instance]->send_camera_capture_status(chan);
         }
     }
 }
@@ -638,6 +689,7 @@ bool AP_Camera::set_tracking(uint8_t instance, TrackingType tracking_type, const
     return backend->set_tracking(tracking_type, p1, p2);
 }
 
+#if AP_CAMERA_SET_CAMERA_SOURCE_ENABLED
 // set camera lens as a value from 0 to 5
 bool AP_Camera::set_lens(uint8_t lens)
 {
@@ -661,6 +713,21 @@ bool AP_Camera::set_lens(uint8_t instance, uint8_t lens)
     // call instance
     return backend->set_lens(lens);
 }
+
+// set_camera_source is functionally the same as set_lens except primary and secondary lenses are specified by type
+bool AP_Camera::set_camera_source(uint8_t instance, CameraSource primary_source, CameraSource secondary_source)
+{
+    WITH_SEMAPHORE(_rsem);
+
+    auto *backend = get_instance(instance);
+    if (backend == nullptr) {
+        return false;
+    }
+
+    // call instance
+    return backend->set_camera_source(primary_source, secondary_source);
+}
+#endif // AP_CAMERA_SET_CAMERA_SOURCE_ENABLED
 
 #if AP_CAMERA_SCRIPTING_ENABLED
 // accessor to allow scripting backend to retrieve state
@@ -742,6 +809,28 @@ void AP_Camera::convert_params()
         AP_Param::convert_old_parameter(&camera_param_conversion_info[i], 1.0f);
     }
 }
+
+#if AP_RELAY_ENABLED
+// Return true and the relay index if relay camera backend is selected, used for conversion to relay functions
+bool AP_Camera::get_legacy_relay_index(int8_t &index) const
+{
+    // PARAMETER_CONVERSION - Added: Dec-2023
+
+    // Note that this assumes that the camera param conversion has already been done
+    // Copter, Plane, Sub and Rover all have both relay and camera and all init relay first
+    // This will only be a issue if the relay and camera conversion were done at once, if the user skipped 4.4
+    for (uint8_t i = 0; i < AP_CAMERA_MAX_INSTANCES; i++) {
+#if AP_CAMERA_RELAY_ENABLED
+        if ((CameraType)_params[i].type.get() == CameraType::RELAY) {
+            // Camera was hard coded to relay 0
+            index = 0;
+            return true;
+        }
+#endif
+    }
+    return false;
+}
+#endif
 
 // singleton instance
 AP_Camera *AP_Camera::_singleton;

@@ -172,7 +172,7 @@ private:
     void            reset(bool recover_eulers);
 
     // airspeed_ret: will always be filled-in by get_unconstrained_airspeed_estimate which fills in airspeed_ret in this order:
-    //               airspeed as filled-in by an enabled airsped sensor
+    //               airspeed as filled-in by an enabled airspeed sensor
     //               if no airspeed sensor: airspeed estimated using the GPS speed & wind_speed_estimation
     //               Or if none of the above, fills-in using the previous airspeed estimate
     // Return false: if we are using the previous airspeed estimate
@@ -286,6 +286,8 @@ private:
     // pre-calculated trig cache:
     float _sin_yaw;
     float _cos_yaw;
+
+    uint32_t last_log_ms;
 };
 
 #endif  // AP_AHRS_DCM_ENABLED

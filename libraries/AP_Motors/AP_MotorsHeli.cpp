@@ -17,6 +17,7 @@
 #include <AP_HAL/AP_HAL.h>
 #include "AP_MotorsHeli.h"
 #include <GCS_MAVLink/GCS.h>
+#include <AP_Logger/AP_Logger.h>
 
 extern const AP_HAL::HAL& hal;
 
@@ -190,7 +191,7 @@ void AP_MotorsHeli::output_min()
     // move swash to mid
     move_actuators(0.0f,0.0f,0.5f,0.0f);
 
-    update_motor_control(ROTOR_CONTROL_STOP);
+    update_motor_control(AP_MotorsHeli_RSC::RotorControlState::STOP);
 
     // override limits flags
     set_limit_flag_pitch_roll_yaw(true);
@@ -211,11 +212,7 @@ void AP_MotorsHeli::output()
         // block servo_test from happening at disarm
         _servo_test_cycle_counter = 0;
         calculate_armed_scalars();
-        if (!get_interlock()) {
-            output_armed_zero_throttle();
-        } else {
-            output_armed_stabilizing();
-        }
+        output_armed_stabilizing();
     } else {
         output_disarmed();
     }
@@ -228,17 +225,6 @@ void AP_MotorsHeli::output()
 
 // sends commands to the motors
 void AP_MotorsHeli::output_armed_stabilizing()
-{
-    // if manual override active after arming, deactivate it and reinitialize servos
-    if (_servo_mode != SERVO_CONTROL_MODE_AUTOMATED) {
-        reset_flight_controls();
-    }
-
-    move_actuators(_roll_in, _pitch_in, get_throttle(), _yaw_in);
-}
-
-// output_armed_zero_throttle - sends commands to the motors
-void AP_MotorsHeli::output_armed_zero_throttle()
 {
     // if manual override active after arming, deactivate it and reinitialize servos
     if (_servo_mode != SERVO_CONTROL_MODE_AUTOMATED) {
@@ -589,4 +575,40 @@ uint32_t AP_MotorsHeli::get_motor_mask()
 void AP_MotorsHeli::set_desired_rotor_speed(float desired_speed)
 {
     _main_rotor.set_desired_speed(desired_speed);
+}
+
+// Converts AP_Motors::SpoolState from _spool_state variable to AP_MotorsHeli_RSC::RotorControlState
+AP_MotorsHeli_RSC::RotorControlState AP_MotorsHeli::get_rotor_control_state() const
+{
+    switch (_spool_state) {
+        case SpoolState::SHUT_DOWN:
+            // sends minimum values out to the motors
+            return AP_MotorsHeli_RSC::RotorControlState::STOP;
+        case SpoolState::GROUND_IDLE:
+            // sends idle output to motors when armed. rotor could be static or turning (autorotation)
+            return AP_MotorsHeli_RSC::RotorControlState::IDLE;
+        case SpoolState::SPOOLING_UP:
+        case SpoolState::THROTTLE_UNLIMITED:
+            // set motor output based on thrust requests
+            return AP_MotorsHeli_RSC::RotorControlState::ACTIVE;
+        case SpoolState::SPOOLING_DOWN:
+            // sends idle output to motors and wait for rotor to stop
+            return AP_MotorsHeli_RSC::RotorControlState::IDLE;
+    }
+
+    // Should be unreachable, but needed to keep the compiler happy
+    return AP_MotorsHeli_RSC::RotorControlState::STOP;
+}
+
+// Update _heliflags.rotor_runup_complete value writing log event on state change
+void AP_MotorsHeli::set_rotor_runup_complete(bool new_value)
+{
+#if HAL_LOGGING_ENABLED
+    if (!_heliflags.rotor_runup_complete && new_value) {
+        LOGGER_WRITE_EVENT(LogEvent::ROTOR_RUNUP_COMPLETE);
+    } else if (_heliflags.rotor_runup_complete && !new_value && !_heliflags.in_autorotation) {
+        LOGGER_WRITE_EVENT(LogEvent::ROTOR_SPEED_BELOW_CRITICAL);
+    }
+#endif
+    _heliflags.rotor_runup_complete = new_value;
 }

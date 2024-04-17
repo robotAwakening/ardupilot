@@ -52,13 +52,13 @@ using namespace ChibiOS;
 extern ChibiOS::UARTDriver uart_io;
 #endif
 
-const UARTDriver::SerialDef UARTDriver::_serial_tab[] = { HAL_UART_DEVICE_LIST };
+const UARTDriver::SerialDef UARTDriver::_serial_tab[] = { HAL_SERIAL_DEVICE_LIST };
 
 // handle for UART handling thread
 thread_t* volatile UARTDriver::uart_rx_thread_ctx;
 
 // table to find UARTDrivers from serial number, used for event handling
-UARTDriver *UARTDriver::uart_drivers[UART_MAX_DRIVERS];
+UARTDriver *UARTDriver::serial_drivers[UART_MAX_DRIVERS];
 
 // event used to wake up waiting thread. This event number is for
 // caller threads
@@ -104,8 +104,8 @@ serial_num(_serial_num),
 sdef(_serial_tab[_serial_num]),
 _baudrate(57600)
 {
-    osalDbgAssert(serial_num < UART_MAX_DRIVERS, "too many UART drivers");
-    uart_drivers[serial_num] = this;
+    osalDbgAssert(serial_num < UART_MAX_DRIVERS, "too many SERIALn drivers");
+    serial_drivers[serial_num] = this;
 }
 
 /*
@@ -166,11 +166,11 @@ void UARTDriver::uart_rx_thread(void* arg)
         hal.scheduler->delay_microseconds(1000);
 
         for (uint8_t i=0; i<UART_MAX_DRIVERS; i++) {
-            if (uart_drivers[i] == nullptr) {
+            if (serial_drivers[i] == nullptr) {
                 continue;
             }
-            if (uart_drivers[i]->_rx_initialised) {
-                uart_drivers[i]->_rx_timer_tick();
+            if (serial_drivers[i]->_rx_initialised) {
+                serial_drivers[i]->_rx_timer_tick();
             }
         }
     }
@@ -429,6 +429,18 @@ void UARTDriver::_begin(uint32_t b, uint16_t rxS, uint16_t txS)
             sercfg.cr1 = _cr1_options;
             sercfg.cr2 = _cr2_options;
             sercfg.cr3 = _cr3_options;
+
+#if defined(STM32H7)
+            /*
+              H7 defaults to 16x oversampling. To get the highest
+              possible baudrates we need to drop back to 8x
+              oversampling. The H7 UART clock is 100MHz. This allows
+              for up to 12.5MBps on H7 UARTs
+             */
+            if (_baudrate > 100000000UL / 16U) {
+                sercfg.cr1 |= USART_CR1_OVER8;
+            }
+#endif
 
 #ifndef HAL_UART_NODMA
             if (rx_dma_enabled) {
@@ -1684,9 +1696,11 @@ uint16_t UARTDriver::get_options(void) const
 
 #if HAL_UART_STATS_ENABLED
 // request information on uart I/O for @SYS/uarts.txt for this uart
-void UARTDriver::uart_info(ExpandingString &str)
+void UARTDriver::uart_info(ExpandingString &str, StatsTracker &stats, const uint32_t dt_ms)
 {
-    uint32_t now_ms = AP_HAL::millis();
+    const uint32_t tx_bytes = stats.tx.update(_tx_stats_bytes);
+    const uint32_t rx_bytes = stats.rx.update(_rx_stats_bytes);
+
     if (sdef.is_usb) {
         str.printf("OTG%u  ", unsigned(sdef.instance));
     } else {
@@ -1694,14 +1708,11 @@ void UARTDriver::uart_info(ExpandingString &str)
     }
     str.printf("TX%c=%8u RX%c=%8u TXBD=%6u RXBD=%6u\n",
                tx_dma_enabled ? '*' : ' ',
-               unsigned(_tx_stats_bytes),
+               unsigned(tx_bytes),
                rx_dma_enabled ? '*' : ' ',
-               unsigned(_rx_stats_bytes),
-               unsigned(_tx_stats_bytes * 10000 / (now_ms - _last_stats_ms)),
-               unsigned(_rx_stats_bytes * 10000 / (now_ms - _last_stats_ms)));
-    _tx_stats_bytes = 0;
-    _rx_stats_bytes = 0;
-    _last_stats_ms = now_ms;
+               unsigned(rx_bytes),
+               unsigned((tx_bytes * 10000) / dt_ms),
+               unsigned((rx_bytes * 10000) / dt_ms));
 }
 #endif
 

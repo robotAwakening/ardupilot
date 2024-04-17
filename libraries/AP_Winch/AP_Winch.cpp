@@ -36,9 +36,9 @@ const AP_Param::GroupInfo AP_Winch::var_info[] = {
     // @Param: _OPTIONS
     // @DisplayName: Winch options
     // @Description: Winch options
-    // @Bitmask:  0:Spin freely on startup, 1:Verbose output
+    // @Bitmask:  0:Spin freely on startup, 1:Verbose output, 2:Retry if stuck (Daiwa only)
     // @User: Standard
-    AP_GROUPINFO("_OPTIONS", 4, AP_Winch, config.options, 3.0f),
+    AP_GROUPINFO("_OPTIONS", 4, AP_Winch, config.options, 7.0f),
 
     // 4 was _RATE_PID
 
@@ -110,7 +110,7 @@ void AP_Winch::release_length(float length)
 
     // display verbose output to user
     if (backend->option_enabled(Options::VerboseOutput)) {
-        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Winch: lowering %4.1fm to %4.1fm", (double)length, (double)config.length_desired);
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Winch: %s %4.1fm to %4.1fm", is_negative(length) ? "raising" : "lowering", (double)fabsf(length), (double)config.length_desired);
     }
 }
 
@@ -159,7 +159,9 @@ bool AP_Winch::pre_arm_check(char *failmsg, uint8_t failmsg_len) const
     }
 
 PASS_TO_BACKEND(update)
+#if HAL_LOGGING_ENABLED
 PASS_TO_BACKEND(write_log)
+#endif
 
 #undef PASS_TO_BACKEND
 

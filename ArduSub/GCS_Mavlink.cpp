@@ -93,6 +93,11 @@ int16_t GCS_MAVLINK_Sub::vfr_hud_throttle() const
     return (int16_t)(sub.motors.get_throttle() * 100);
 }
 
+float GCS_MAVLINK_Sub::vfr_hud_alt() const
+{
+    return sub.get_alt_msl();
+}
+
 // Work around to get temperature sensor data out
 void GCS_MAVLINK_Sub::send_scaled_pressure3()
 {
@@ -143,6 +148,9 @@ bool GCS_MAVLINK_Sub::send_info()
 
     CHECK_PAYLOAD_SIZE(NAMED_VALUE_FLOAT);
     send_named_float("RollPitch", sub.roll_pitch_flag);
+
+    CHECK_PAYLOAD_SIZE(NAMED_VALUE_FLOAT);
+    send_named_float("RFTarget", sub.mode_surftrak.get_rangefinder_target_cm() / 100.0f);
 
     return true;
 }
@@ -346,15 +354,21 @@ static const ap_message STREAM_RAW_SENSORS_msgs[] = {
 static const ap_message STREAM_EXTENDED_STATUS_msgs[] = {
     MSG_SYS_STATUS,
     MSG_POWER_STATUS,
+#if HAL_WITH_MCU_MONITORING
     MSG_MCU_STATUS,
+#endif
     MSG_MEMINFO,
     MSG_CURRENT_WAYPOINT,
     MSG_GPS_RAW,
     MSG_GPS_RTK,
+#if GPS_MAX_RECEIVERS > 1
     MSG_GPS2_RAW,
     MSG_GPS2_RTK,
+#endif
     MSG_NAV_CONTROLLER_OUTPUT,
+#if AP_FENCE_ENABLED
     MSG_FENCE_STATUS,
+#endif
     MSG_NAMED_FLOAT
 };
 static const ap_message STREAM_POSITION_msgs[] = {
@@ -368,7 +382,9 @@ static const ap_message STREAM_RC_CHANNELS_msgs[] = {
 };
 static const ap_message STREAM_EXTRA1_msgs[] = {
     MSG_ATTITUDE,
+#if AP_SIM_ENABLED
     MSG_SIMSTATE,
+#endif
     MSG_AHRS2,
     MSG_PID_TUNING
 };
@@ -378,14 +394,22 @@ static const ap_message STREAM_EXTRA2_msgs[] = {
 static const ap_message STREAM_EXTRA3_msgs[] = {
     MSG_AHRS,
     MSG_SYSTEM_TIME,
+#if AP_RANGEFINDER_ENABLED
     MSG_RANGEFINDER,
+#endif
     MSG_DISTANCE_SENSOR,
 #if AP_TERRAIN_AVAILABLE
     MSG_TERRAIN,
 #endif
+#if AP_BATTERY_ENABLED
     MSG_BATTERY_STATUS,
+#endif
+#if HAL_MOUNT_ENABLED
     MSG_GIMBAL_DEVICE_ATTITUDE_STATUS,
+#endif
+#if AP_OPTICALFLOW_ENABLED
     MSG_OPTICAL_FLOW,
+#endif
 #if COMPASS_CAL_ENABLED
     MSG_MAG_CAL_REPORT,
     MSG_MAG_CAL_PROGRESS,
@@ -395,7 +419,9 @@ static const ap_message STREAM_EXTRA3_msgs[] = {
 #if AP_RPM_ENABLED
     MSG_RPM,
 #endif
+#if HAL_WITH_ESC_TELEM
     MSG_ESC_TELEMETRY,
+#endif
 };
 static const ap_message STREAM_PARAMS_msgs[] = {
     MSG_NEXT_PARAM
@@ -454,19 +480,21 @@ MAV_RESULT GCS_MAVLINK_Sub::handle_command_do_set_roi(const Location &roi_loc)
     return MAV_RESULT_ACCEPTED;
 }
 
-bool GCS_MAVLINK_Sub::set_home_to_current_location(bool _lock) {
-    return sub.set_home_to_current_location(_lock);
-}
-bool GCS_MAVLINK_Sub::set_home(const Location& loc, bool _lock) {
-    return sub.set_home(loc, _lock);
-}
-
 MAV_RESULT GCS_MAVLINK_Sub::handle_command_int_packet(const mavlink_command_int_t &packet, const mavlink_message_t &msg)
 {
     switch(packet.command) {
 
+    case MAV_CMD_CONDITION_YAW:
+        return handle_MAV_CMD_CONDITION_YAW(packet);
+
+    case MAV_CMD_DO_CHANGE_SPEED:
+        return handle_MAV_CMD_DO_CHANGE_SPEED(packet);
+
     case MAV_CMD_DO_MOTOR_TEST:
         return handle_MAV_CMD_DO_MOTOR_TEST(packet);
+
+    case MAV_CMD_MISSION_START:
+        return handle_MAV_CMD_MISSION_START(packet);
 
     case MAV_CMD_NAV_LOITER_UNLIM:
         return handle_MAV_CMD_NAV_LOITER_UNLIM(packet);
@@ -495,11 +523,8 @@ MAV_RESULT GCS_MAVLINK_Sub::handle_MAV_CMD_NAV_LAND(const mavlink_command_int_t 
         return MAV_RESULT_ACCEPTED;
 }
 
-MAV_RESULT GCS_MAVLINK_Sub::handle_command_long_packet(const mavlink_command_long_t &packet, const mavlink_message_t &msg)
+MAV_RESULT GCS_MAVLINK_Sub::handle_MAV_CMD_CONDITION_YAW(const mavlink_command_int_t &packet)
 {
-    switch (packet.command) {
-
-    case MAV_CMD_CONDITION_YAW:
         // param1 : target angle [0-360]
         // param2 : speed during change [deg per second]
         // param3 : direction (-1:ccw, +1:cw)
@@ -510,9 +535,11 @@ MAV_RESULT GCS_MAVLINK_Sub::handle_command_long_packet(const mavlink_command_lon
             sub.mode_auto.set_auto_yaw_look_at_heading(packet.param1, packet.param2, (int8_t)packet.param3, (uint8_t)packet.param4);
             return MAV_RESULT_ACCEPTED;
         }
-        return MAV_RESULT_FAILED;
+        return MAV_RESULT_DENIED;
+}
 
-    case MAV_CMD_DO_CHANGE_SPEED:
+MAV_RESULT GCS_MAVLINK_Sub::handle_MAV_CMD_DO_CHANGE_SPEED(const mavlink_command_int_t &packet)
+{
         // param1 : unused
         // param2 : new speed in m/s
         // param3 : unused
@@ -522,16 +549,14 @@ MAV_RESULT GCS_MAVLINK_Sub::handle_command_long_packet(const mavlink_command_lon
             return MAV_RESULT_ACCEPTED;
         }
         return MAV_RESULT_FAILED;
+}
 
-    case MAV_CMD_MISSION_START:
+MAV_RESULT GCS_MAVLINK_Sub::handle_MAV_CMD_MISSION_START(const mavlink_command_int_t &packet)
+{
         if (sub.motors.armed() && sub.set_mode(Mode::Number::AUTO, ModeReason::GCS_COMMAND)) {
             return MAV_RESULT_ACCEPTED;
         }
         return MAV_RESULT_FAILED;
-
-    default:
-        return GCS_MAVLINK::handle_command_long_packet(packet, msg);
-    }
 }
 
 MAV_RESULT GCS_MAVLINK_Sub::handle_MAV_CMD_DO_MOTOR_TEST(const mavlink_command_int_t &packet)
@@ -546,7 +571,7 @@ MAV_RESULT GCS_MAVLINK_Sub::handle_MAV_CMD_DO_MOTOR_TEST(const mavlink_command_i
         return MAV_RESULT_ACCEPTED;
 }
 
-void GCS_MAVLINK_Sub::handleMessage(const mavlink_message_t &msg)
+void GCS_MAVLINK_Sub::handle_message(const mavlink_message_t &msg)
 {
     switch (msg.msgid) {
 
@@ -561,7 +586,23 @@ void GCS_MAVLINK_Sub::handleMessage(const mavlink_message_t &msg)
             break; // only accept control aimed at us
         }
 
-        sub.transform_manual_control_to_rc_override(packet.x,packet.y,packet.z,packet.r,packet.buttons);
+        sub.transform_manual_control_to_rc_override(
+            packet.x,
+            packet.y,
+            packet.z,
+            packet.r,
+            packet.buttons,
+            packet.buttons2,
+            packet.enabled_extensions,
+            packet.s,
+            packet.t,
+            packet.aux1,
+            packet.aux2,
+            packet.aux3,
+            packet.aux4,
+            packet.aux5,
+            packet.aux6
+        );
 
         sub.failsafe.last_pilot_input_ms = AP_HAL::millis();
         // a RC override message is considered to be a 'heartbeat'
@@ -779,7 +820,7 @@ void GCS_MAVLINK_Sub::handleMessage(const mavlink_message_t &msg)
         break;
 
     default:
-        handle_common_message(msg);
+        GCS_MAVLINK::handle_message(msg);
         break;
     }     // end switch
 } // end handle mavlink
@@ -799,7 +840,8 @@ uint64_t GCS_MAVLINK_Sub::capabilities() const
         );
 }
 
-MAV_RESULT GCS_MAVLINK_Sub::handle_flight_termination(const mavlink_command_int_t &packet) {
+MAV_RESULT GCS_MAVLINK_Sub::handle_flight_termination(const mavlink_command_int_t &packet)
+{
     if (packet.param1 > 0.5f) {
         sub.arming.disarm(AP_Arming::Method::TERMINATION);
         return MAV_RESULT_ACCEPTED;
@@ -807,17 +849,14 @@ MAV_RESULT GCS_MAVLINK_Sub::handle_flight_termination(const mavlink_command_int_
     return MAV_RESULT_FAILED;
 }
 
-int32_t GCS_MAVLINK_Sub::global_position_int_alt() const {
-    if (!sub.ap.depth_sensor_present) {
-        return 0;
-    }
-    return GCS_MAVLINK::global_position_int_alt();
+int32_t GCS_MAVLINK_Sub::global_position_int_alt() const
+{
+    return static_cast<int32_t>(sub.get_alt_msl() * 1000.0f);
 }
-int32_t GCS_MAVLINK_Sub::global_position_int_relative_alt() const {
-    if (!sub.ap.depth_sensor_present) {
-        return 0;
-    }
-    return GCS_MAVLINK::global_position_int_relative_alt();
+
+int32_t GCS_MAVLINK_Sub::global_position_int_relative_alt() const
+{
+    return static_cast<int32_t>(sub.get_alt_rel() * 1000.0f);
 }
 
 #if HAL_HIGH_LATENCY2_ENABLED

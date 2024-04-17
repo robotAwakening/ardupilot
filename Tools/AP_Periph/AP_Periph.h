@@ -12,6 +12,7 @@
 #include <AP_BattMonitor/AP_BattMonitor.h>
 #include <AP_Airspeed/AP_Airspeed.h>
 #include <AP_RangeFinder/AP_RangeFinder.h>
+#include <AP_RangeFinder/AP_RangeFinder_Backend.h>
 #include <AP_Proximity/AP_Proximity.h>
 #include <AP_EFI/AP_EFI.h>
 #include <AP_KDECAN/AP_KDECAN.h>
@@ -26,16 +27,38 @@
 #include <AP_Scripting/AP_Scripting.h>
 #include <AP_HAL/CANIface.h>
 #include <AP_Stats/AP_Stats.h>
-#include <AP_Networking/AP_Networking.h>
 #include <AP_RPM/AP_RPM.h>
 #include <AP_SerialManager/AP_SerialManager.h>
 #include <AP_ESC_Telem/AP_ESC_Telem_config.h>
 #if HAL_WITH_ESC_TELEM
 #include <AP_ESC_Telem/AP_ESC_Telem.h>
 #endif
+#ifdef HAL_PERIPH_ENABLE_RTC
+#include <AP_RTC/AP_RTC.h>
+#endif
 #include <AP_RCProtocol/AP_RCProtocol_config.h>
 #include "rc_in.h"
 #include "batt_balance.h"
+#include "networking.h"
+#include "serial_options.h"
+#if AP_SIM_ENABLED
+#include <SITL/SITL.h>
+#endif
+#include <AP_AHRS/AP_AHRS.h>
+
+#ifdef HAL_PERIPH_ENABLE_RELAY
+#ifdef HAL_PERIPH_ENABLE_PWM_HARDPOINT
+    #error "Relay and PWM_HARDPOINT both use hardpoint message"
+#endif
+#include <AP_Relay/AP_Relay.h>
+#if !AP_RELAY_ENABLED
+    #error "HAL_PERIPH_ENABLE_RELAY requires AP_RELAY_ENABLED"
+#endif
+#endif
+
+#if defined(HAL_PERIPH_ENABLE_DEVICE_TEMPERATURE) && !AP_TEMPERATURE_SENSOR_ENABLED
+    #error "HAL_PERIPH_ENABLE_DEVICE_TEMPERATURE requires AP_TEMPERATURE_SENSOR_ENABLED"
+#endif
 
 #include <AP_NMEA_Output/AP_NMEA_Output.h>
 #if HAL_NMEA_OUTPUT_ENABLED && !(HAL_GCS_ENABLED && defined(HAL_PERIPH_ENABLE_GPS))
@@ -76,6 +99,15 @@
 #define HAL_PERIPH_CAN_MIRROR 0
 #endif
 
+#if defined(HAL_PERIPH_LISTEN_FOR_SERIAL_UART_REBOOT_CMD_PORT) && !defined(HAL_DEBUG_BUILD) && !defined(HAL_PERIPH_LISTEN_FOR_SERIAL_UART_REBOOT_NON_DEBUG)
+/* this checking for reboot can lose bytes on GPS modules and other
+ * serial devices. It is really only relevent on a debug build if you
+ * really want it for non-debug build then define
+ * HAL_PERIPH_LISTEN_FOR_SERIAL_UART_REBOOT_NON_DEBUG in hwdef.dat
+ */
+#undef HAL_PERIPH_LISTEN_FOR_SERIAL_UART_REBOOT_CMD_PORT
+#endif
+
 #include "Parameters.h"
 
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
@@ -88,7 +120,9 @@ void stm32_watchdog_pat();
 extern const app_descriptor_t app_descriptor;
 
 extern "C" {
-void can_printf(const char *fmt, ...) FMT_PRINTF(1,2);
+    void can_vprintf(uint8_t severity, const char *fmt, va_list arg);
+    void can_printf_severity(uint8_t severity, const char *fmt, ...) FMT_PRINTF(2,3);
+    void can_printf(const char *fmt, ...) FMT_PRINTF(1,2);
 }
 
 struct CanardInstance;
@@ -135,8 +169,11 @@ public:
     void send_relposheading_msg();
     void can_baro_update();
     void can_airspeed_update();
+#ifdef HAL_PERIPH_ENABLE_RANGEFINDER
     void can_rangefinder_update();
+#endif
     void can_battery_update();
+    void can_battery_send_cells(uint8_t instance);
     void can_proximity_update();
     void can_buzzer_update(void);
     void can_safety_button_update(void);
@@ -235,6 +272,7 @@ public:
     struct {
         mavlink_message_t msg;
         mavlink_status_t status;
+        uint32_t last_heartbeat_ms;
     } adsb;
 #endif
 
@@ -244,7 +282,8 @@ public:
 
 #ifdef HAL_PERIPH_ENABLE_RANGEFINDER
     RangeFinder rangefinder;
-    uint32_t last_sample_ms;
+    uint32_t last_rangefinder_update_ms;
+    uint32_t last_rangefinder_sample_ms[RANGEFINDER_MAX_INSTANCES];
 #endif
 
 #ifdef HAL_PERIPH_ENABLE_PROXIMITY
@@ -320,9 +359,18 @@ public:
     void batt_balance_update();
     BattBalance battery_balance;
 #endif
+
+#ifdef HAL_PERIPH_ENABLE_SERIAL_OPTIONS
+    SerialOptions serial_options;
+#endif
     
 #if AP_TEMPERATURE_SENSOR_ENABLED
     AP_TemperatureSensor temperature_sensor;
+#ifdef HAL_PERIPH_ENABLE_DEVICE_TEMPERATURE
+    void temperature_sensor_update();
+    uint32_t temperature_last_send_ms;
+    uint8_t temperature_last_sent_index;
+#endif
 #endif
 
 #if defined(HAL_PERIPH_ENABLE_NOTIFY) || defined(HAL_PERIPH_NEOPIXEL_COUNT_WITHOUT_NOTIFY)
@@ -354,24 +402,46 @@ public:
 #endif
 
 #ifdef HAL_PERIPH_ENABLE_NETWORKING
-    AP_Networking networking;
+    Networking_Periph networking_periph;
+#endif
+
+#ifdef HAL_PERIPH_ENABLE_RTC
+    AP_RTC rtc;
 #endif
 
 #if HAL_GCS_ENABLED
     GCS_Periph _gcs;
 #endif
+
+#ifdef HAL_PERIPH_ENABLE_RELAY
+    AP_Relay relay;
+#endif
+
     // setup the var_info table
     AP_Param param_loader{var_info};
 
     static const AP_Param::Info var_info[];
 
+#ifdef HAL_PERIPH_ENABLE_EFI
+    uint32_t last_efi_update_ms;
+#endif
+#ifdef HAL_PERIPH_ENABLE_MAG
     uint32_t last_mag_update_ms;
+#endif
+#ifdef HAL_PERIPH_ENABLE_GPS
     uint32_t last_gps_update_ms;
     uint32_t last_gps_yaw_ms;
+#endif
     uint32_t last_relposheading_ms;
+#ifdef HAL_PERIPH_ENABLE_BARO
     uint32_t last_baro_update_ms;
+#endif
+#ifdef HAL_PERIPH_ENABLE_AIRSPEED
     uint32_t last_airspeed_update_ms;
+#endif
+#ifdef HAL_PERIPH_ENABLE_GPS
     bool saw_gps_lock_once;
+#endif
 
     static AP_Periph_FW *_singleton;
 
@@ -385,7 +455,16 @@ public:
     bool debug_option_is_set(const DebugOptions option) const {
         return (uint8_t(g.debug.get()) & (1U<<uint8_t(option))) != 0;
     }
-    
+
+    enum class PeriphOptions {
+        PROBE_CONTINUOUS = 1U<<0,
+    };
+
+    // check if a periph option is set
+    bool option_is_set(const PeriphOptions opt) const {
+        return (uint32_t(g.options.get()) & uint32_t(opt)) != 0;
+    }
+
     // show stack as DEBUG msgs
     void show_stack_free();
 
@@ -396,8 +475,16 @@ public:
                           uint16_t data_type_id,
                           uint8_t priority,
                           const void* payload,
-                          uint16_t payload_len);
+                          uint16_t payload_len,
+                          uint8_t iface_mask=0);
 
+    bool canard_respond(CanardInstance* canard_instance,
+                        CanardRxTransfer* transfer,
+                        uint64_t data_type_signature,
+                        uint16_t data_type_id,
+                        const uint8_t *payload,
+                        uint16_t payload_len);
+    
     void onTransferReceived(CanardInstance* canard_instance,
                             CanardRxTransfer* transfer);
     bool shouldAcceptTransfer(const CanardInstance* canard_instance,
@@ -405,7 +492,10 @@ public:
                               uint16_t data_type_id,
                               CanardTransferType transfer_type,
                               uint8_t source_node_id);
-    
+
+    // reboot the peripheral, optionally holding in bootloader
+    void reboot(bool hold_in_bootloader);
+
 #if AP_UART_MONITOR_ENABLED
     void handle_tunnel_Targetted(CanardInstance* canard_instance, CanardRxTransfer* transfer);
     void send_serial_monitor_data();
@@ -438,6 +528,7 @@ public:
     void handle_beep_command(CanardInstance* canard_instance, CanardRxTransfer* transfer);
     void handle_lightscommand(CanardInstance* canard_instance, CanardRxTransfer* transfer);
     void handle_notify_state(CanardInstance* canard_instance, CanardRxTransfer* transfer);
+    void handle_hardpoint_command(CanardInstance* canard_instance, CanardRxTransfer* transfer);
 
     void process1HzTasks(uint64_t timestamp_usec);
     void processTx(void);
@@ -445,7 +536,7 @@ public:
 #if HAL_PERIPH_CAN_MIRROR
     void processMirror(void);
 #endif // HAL_PERIPH_CAN_MIRROR
-    void cleanup_stale_transactions(uint64_t &timestamp_usec);
+    void cleanup_stale_transactions(uint64_t timestamp_usec);
     void update_rx_protocol_stats(int16_t res);
     void node_status_send(void);
     bool can_do_dna();
@@ -473,9 +564,9 @@ public:
 
 #if AP_SIM_ENABLED
     SITL::SIM sitl;
+#endif
 #if AP_AHRS_ENABLED
     AP_AHRS ahrs;
-#endif
 #endif
 };
 

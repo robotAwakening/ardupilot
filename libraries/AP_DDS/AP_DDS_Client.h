@@ -1,17 +1,23 @@
 #pragma once
 
+#include "AP_DDS_config.h"
+
 #if AP_DDS_ENABLED
 
 #include "uxr/client/client.h"
 #include "ucdr/microcdr.h"
+
+#include "ardupilot_msgs/msg/GlobalPosition.h"
 #include "builtin_interfaces/msg/Time.h"
 
 #include "sensor_msgs/msg/NavSatFix.h"
 #include "tf2_msgs/msg/TFMessage.h"
 #include "sensor_msgs/msg/BatteryState.h"
+#include "sensor_msgs/msg/Imu.h"
 #include "sensor_msgs/msg/Joy.h"
 #include "geometry_msgs/msg/PoseStamped.h"
 #include "geometry_msgs/msg/TwistStamped.h"
+#include "geographic_msgs/msg/GeoPointStamped.h"
 #include "geographic_msgs/msg/GeoPoseStamped.h"
 #include "rosgraph_msgs/msg/Clock.h"
 
@@ -23,7 +29,6 @@
 #include "fcntl.h"
 
 #include <AP_Param/AP_Param.h>
-#include "AP_DDS_config.h"
 
 #define DDS_MTU             512
 #define DDS_STREAM_HISTORY  8
@@ -31,6 +36,7 @@
 
 #if AP_DDS_UDP_ENABLED
 #include <AP_HAL/utility/Socket.h>
+#include <AP_Networking/AP_Networking_address.h>
 #endif
 
 extern const AP_HAL::HAL& hal;
@@ -54,26 +60,30 @@ private:
 
     // Outgoing Sensor and AHRS data
     builtin_interfaces_msg_Time time_topic;
+    geographic_msgs_msg_GeoPointStamped gps_global_origin_topic;
     geographic_msgs_msg_GeoPoseStamped geo_pose_topic;
     geometry_msgs_msg_PoseStamped local_pose_topic;
     geometry_msgs_msg_TwistStamped tx_local_velocity_topic;
     sensor_msgs_msg_BatteryState battery_state_topic;
     sensor_msgs_msg_NavSatFix nav_sat_fix_topic;
+    sensor_msgs_msg_Imu imu_topic;
     rosgraph_msgs_msg_Clock clock_topic;
     // incoming joystick data
     static sensor_msgs_msg_Joy rx_joy_topic;
     // incoming REP147 velocity control
     static geometry_msgs_msg_TwistStamped rx_velocity_control_topic;
+    // incoming REP147 goal interface global position
+    static ardupilot_msgs_msg_GlobalPosition rx_global_position_control_topic;
     // outgoing transforms
     tf2_msgs_msg_TFMessage tx_static_transforms_topic;
-    tf2_msgs_msg_TFMessage tx_dynamic_transforms_topic;
     // incoming transforms
     static tf2_msgs_msg_TFMessage rx_dynamic_transforms_topic;
 
     HAL_Semaphore csem;
 
     // connection parametrics
-    bool connected = true;
+    bool status_ok{false};
+    bool connected{false};
 
     static void update_topic(builtin_interfaces_msg_Time& msg);
     bool update_topic(sensor_msgs_msg_NavSatFix& msg, const uint8_t instance) WARN_IF_UNUSED;
@@ -82,7 +92,9 @@ private:
     static void update_topic(geometry_msgs_msg_PoseStamped& msg);
     static void update_topic(geometry_msgs_msg_TwistStamped& msg);
     static void update_topic(geographic_msgs_msg_GeoPoseStamped& msg);
+    static void update_topic(sensor_msgs_msg_Imu& msg);
     static void update_topic(rosgraph_msgs_msg_Clock& msg);
+    static void update_topic(geographic_msgs_msg_GeoPointStamped& msg);
 
     // subscription callback function
     static void on_topic_trampoline(uxrSession* session, uxrObjectId object_id, uint16_t request_id, uxrStreamId stream_id, struct ucdrBuffer* ub, uint16_t length, void* args);
@@ -106,6 +118,8 @@ private:
     uint64_t last_nav_sat_fix_time_ms;
     // The last ms timestamp AP_DDS wrote a BatteryState message
     uint64_t last_battery_state_time_ms;
+    // The last ms timestamp AP_DDS wrote an IMU message
+    uint64_t last_imu_time_ms;
     // The last ms timestamp AP_DDS wrote a Local Pose message
     uint64_t last_local_pose_time_ms;
     // The last ms timestamp AP_DDS wrote a Local Velocity message
@@ -114,6 +128,8 @@ private:
     uint64_t last_geo_pose_time_ms;
     // The last ms timestamp AP_DDS wrote a Clock message
     uint64_t last_clock_time_ms;
+    // The last ms timestamp AP_DDS wrote a gps global origin message
+    uint64_t last_gps_global_origin_time_ms;
 
     // functions for serial transport
     bool ddsSerialInit();
@@ -137,23 +153,31 @@ private:
     struct {
         AP_Int32 port;
         // UDP endpoint
-        const char* ip = "127.0.0.1";
+        AP_Networking_IPV4 ip{AP_DDS_DEFAULT_UDP_IP_ADDR};
         // UDP Allocation
         uxrCustomTransport transport;
         SocketAPM *socket;
     } udp;
 #endif
+    // pointer to transport's communication structure
+    uxrCommunication *comm{nullptr};
 
     // client key we present
-    static constexpr uint32_t uniqueClientKey = 0xAAAABBBB;
+    static constexpr uint32_t key = 0xAAAABBBB;
 
 public:
+    ~AP_DDS_Client();
+
     bool start(void);
     void main_loop(void);
 
-    //! @brief Initialize the client's transport, uxr session, and IO stream(s)
+    //! @brief Initialize the client's transport
     //! @return True on successful initialization, false on failure
-    bool init() WARN_IF_UNUSED;
+    bool init_transport() WARN_IF_UNUSED;
+
+    //! @brief Initialize the client's uxr session and IO stream(s)
+    //! @return True on successful initialization, false on failure
+    bool init_session() WARN_IF_UNUSED;
 
     //! @brief Set up the client's participants, data read/writes,
     //         publishers, subscribers
@@ -174,10 +198,17 @@ public:
     void write_tx_local_velocity_topic();
     //! @brief Serialize the current geo_pose and publish to the IO stream(s)
     void write_geo_pose_topic();
+    //! @brief Serialize the current IMU data and publish to the IO stream(s)
+    void write_imu_topic();
     //! @brief Serialize the current clock and publish to the IO stream(s)
     void write_clock_topic();
+    //! @brief Serialize the current gps global origin and publish to the IO stream(s)
+    void write_gps_global_origin_topic();
     //! @brief Update the internally stored DDS messages with latest data
     void update();
+
+    //! @brief GCS message prefix
+    static constexpr const char* msg_prefix = "DDS:";
 
     //! @brief Parameter storage
     static const struct AP_Param::GroupInfo var_info[];

@@ -342,6 +342,9 @@ public:
     // sanity check parameters.  should be called once before take-off
     virtual void parameter_sanity_check() {}
 
+    // set the PID notch sample rates
+    virtual void set_notch_sample_rate(float sample_rate) {}
+
     // return true if the rpy mix is at lowest value
     virtual bool is_throttle_mix_min() const { return true; }
 
@@ -562,9 +565,6 @@ protected:
     // update state in ControlMonitor
     void control_monitor_filter_pid(float value, float &rms_P);
     void control_monitor_update(void);
-
-    // true in inverted flight mode
-    bool _inverted_flight;
 
 public:
     // log a CTRL message

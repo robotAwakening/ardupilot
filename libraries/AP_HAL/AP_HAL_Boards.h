@@ -1,5 +1,5 @@
 /**
- * C preprocesor enumeration of the boards supported by the AP_HAL.
+ * C preprocessor enumeration of the boards supported by the AP_HAL.
  * This list exists so HAL_BOARD == HAL_BOARD_xxx preprocessor blocks
  * can be used to exclude HAL boards from the build when appropriate.
  * It's not an elegant solution but we can improve it in future.
@@ -42,6 +42,7 @@
 #define HAL_BOARD_SUBTYPE_LINUX_NAVIGATOR  1023
 #define HAL_BOARD_SUBTYPE_LINUX_VNAV       1024
 #define HAL_BOARD_SUBTYPE_LINUX_OBAL_V1    1025
+#define HAL_BOARD_SUBTYPE_LINUX_CANZERO    1026
 
 /* HAL CHIBIOS sub-types, starting at 5000
 
@@ -51,14 +52,14 @@
 */
 #define HAL_BOARD_SUBTYPE_CHIBIOS_SKYVIPER_F412	5000
 #define HAL_BOARD_SUBTYPE_CHIBIOS_FMUV3         5001
-#define HAL_BOARD_SUBTYPE_CHIBIOS_FMUV4         5002
+// #define HAL_BOARD_SUBTYPE_CHIBIOS_FMUV4         5002
 #define HAL_BOARD_SUBTYPE_CHIBIOS_GENERIC       5009
 #define HAL_BOARD_SUBTYPE_CHIBIOS_FMUV5         5013
-#define HAL_BOARD_SUBTYPE_CHIBIOS_VRBRAIN_V51   5016
-#define HAL_BOARD_SUBTYPE_CHIBIOS_VRBRAIN_V52   5017
-#define HAL_BOARD_SUBTYPE_CHIBIOS_VRUBRAIN_V51  5018
-#define HAL_BOARD_SUBTYPE_CHIBIOS_VRCORE_V10    5019
-#define HAL_BOARD_SUBTYPE_CHIBIOS_VRBRAIN_V54   5020
+// #define HAL_BOARD_SUBTYPE_CHIBIOS_VRBRAIN_V51   5016
+// #define HAL_BOARD_SUBTYPE_CHIBIOS_VRBRAIN_V52   5017
+// #define HAL_BOARD_SUBTYPE_CHIBIOS_VRUBRAIN_V51  5018
+// #define HAL_BOARD_SUBTYPE_CHIBIOS_VRCORE_V10    5019
+// #define HAL_BOARD_SUBTYPE_CHIBIOS_VRBRAIN_V54   5020
 
 #define HAL_BOARD_SUBTYPE_ESP32_DIY             6001
 #define HAL_BOARD_SUBTYPE_ESP32_ICARUS          6002
@@ -67,6 +68,7 @@
 #define HAL_BOARD_SUBTYPE_ESP32_TOMTE76         6005
 #define HAL_BOARD_SUBTYPE_ESP32_NICK            6006
 #define HAL_BOARD_SUBTYPE_ESP32_S3DEVKIT        6007
+#define HAL_BOARD_SUBTYPE_ESP32_S3EMPTY         6008
 
 /* InertialSensor driver types */
 #define HAL_INS_NONE         0
@@ -169,8 +171,12 @@
 #define HAL_WITH_IO_MCU 0
 #endif
 
+#ifndef HAL_WITH_IO_MCU_BIDIR_DSHOT
+#define HAL_WITH_IO_MCU_BIDIR_DSHOT 0
+#endif
+
 #ifndef HAL_WITH_IO_MCU_DSHOT
-#define HAL_WITH_IO_MCU_DSHOT 0
+#define HAL_WITH_IO_MCU_DSHOT HAL_WITH_IO_MCU_BIDIR_DSHOT
 #endif
 
 // this is used as a general mechanism to make a 'small' build by
@@ -205,8 +211,8 @@
 #define HAL_INS_DEFAULT HAL_INS_NONE
 #endif
 
-#ifndef HAL_GPS_TYPE_DEFAULT
-#define HAL_GPS_TYPE_DEFAULT 1
+#ifndef HAL_GPS1_TYPE_DEFAULT
+#define HAL_GPS1_TYPE_DEFAULT 1
 #endif
 
 #ifndef HAL_CAN_DRIVER_DEFAULT
@@ -296,11 +302,11 @@
 #endif
 
 #ifndef HAL_SERIAL_ESC_COMM_ENABLED
-#ifdef DISABLE_SERIAL_ESC_COMM
-#define HAL_SERIAL_ESC_COMM_ENABLED 0
-#else
 #define HAL_SERIAL_ESC_COMM_ENABLED 1
 #endif
+
+#ifndef AP_BOOTLOADER_FLASHING_ENABLED
+#define AP_BOOTLOADER_FLASHING_ENABLED 0
 #endif
 
 #ifndef HAL_HNF_MAX_FILTERS
@@ -357,3 +363,13 @@
 #ifndef HAL_ENABLE_SENDING_STATS
 #define HAL_ENABLE_SENDING_STATS BOARD_FLASH_SIZE >= 256
 #endif
+
+#ifndef HAL_GPIO_LED_ON
+#define HAL_GPIO_LED_ON 0
+#endif
+
+#ifdef HAL_GPIO_LED_OFF
+#error "HAL_GPIO_LED_OFF must not be defined, it is implicitly !HAL_GPIO_LED_ON"
+#endif
+
+#define HAL_GPIO_LED_OFF (!HAL_GPIO_LED_ON)

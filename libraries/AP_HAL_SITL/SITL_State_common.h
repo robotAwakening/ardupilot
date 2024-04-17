@@ -8,14 +8,19 @@
 #define SITL_MCAST_PORT 20721
 #define SITL_SERVO_PORT 20722
 
+#include <AP_HAL/utility/Socket_native.h>
 #include <SITL/SIM_Gimbal.h>
 #include <SITL/SIM_ADSB.h>
+#include <SITL/SIM_ADSB_Sagetech_MXS.h>
+#include <SITL/SIM_EFI_Hirth.h>
 #include <SITL/SIM_Vicon.h>
+#include <SITL/SIM_RF_Ainstein_LR_D1.h>
 #include <SITL/SIM_RF_Benewake_TF02.h>
 #include <SITL/SIM_RF_Benewake_TF03.h>
 #include <SITL/SIM_RF_Benewake_TFmini.h>
 #include <SITL/SIM_RF_NoopLoop.h>
 #include <SITL/SIM_RF_TeraRanger_Serial.h>
+#include <SITL/SIM_RF_JRE.h>
 #include <SITL/SIM_RF_LightWareSerial.h>
 #include <SITL/SIM_RF_LightWareSerialBinary.h>
 #include <SITL/SIM_RF_Lanbao.h>
@@ -31,6 +36,7 @@
 #include <SITL/SIM_RF_GYUS42v2.h>
 #include <SITL/SIM_VectorNav.h>
 #include <SITL/SIM_MicroStrain.h>
+#include <SITL/SIM_InertialLabs.h>
 #include <SITL/SIM_AIS.h>
 #include <SITL/SIM_GPS.h>
 
@@ -44,6 +50,7 @@
 #include <SITL/SIM_PS_LightWare_SF45B.h>
 
 #include <SITL/SIM_RichenPower.h>
+#include <SITL/SIM_Loweheiser.h>
 #include <SITL/SIM_FETtecOneWireESC.h>
 
 #include "AP_HAL_SITL.h"
@@ -52,10 +59,6 @@
 #include "RCInput.h"
 
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/udp.h>
-#include <arpa/inet.h>
 #include <vector>
 
 #include <AP_Baro/AP_Baro.h>
@@ -64,7 +67,6 @@
 #include <AP_Terrain/AP_Terrain.h>
 #include <SITL/SITL.h>
 #include <SITL/SITL_Input.h>
-#include <AP_HAL/utility/Socket.h>
 
 class HAL_SITL;
 
@@ -73,7 +75,7 @@ class HALSITL::SITL_State_Common {
     friend class HALSITL::Util;
     friend class HALSITL::GPIO;
 public:
-    void init(int argc, char * const argv[]);
+    virtual void init(int argc, char * const argv[]) = 0;
 
     enum vehicle_type {
         NONE,
@@ -112,15 +114,23 @@ public:
     SITL::ADSB *adsb;
 #endif
 
+#if AP_SIM_ADSB_SAGETECH_MXS_ENABLED
+    SITL::ADSB_Sagetech_MXS *sagetech_mxs;
+#endif
+
 #if !defined(HAL_BUILD_AP_PERIPH)
     // simulated vicon system:
     SITL::Vicon *vicon;
 #endif
 
+    // simulated Ainstein LR-D1 rangefinder:
+    SITL::RF_Ainstein_LR_D1 *ainsteinlrd1;
     // simulated Benewake tf02 rangefinder:
     SITL::RF_Benewake_TF02 *benewake_tf02;
     // simulated Benewake tf03 rangefinder:
     SITL::RF_Benewake_TF03 *benewake_tf03;
+    //simulated JAE JRE rangefinder:
+    SITL::RF_JRE *jre;
     // simulated Benewake tfmini rangefinder:
     SITL::RF_Benewake_TFmini *benewake_tfmini;
     //simulated NoopLoop TOFSense rangefinder:
@@ -188,9 +198,15 @@ public:
     // simulated VectorNav system:
     SITL::VectorNav *vectornav;
 
-    // simulated LORD MicroStrain system
+    // simulated MicroStrain system
     SITL::MicroStrain5 *microstrain5;
 
+    // simulated MicroStrain system
+    SITL::MicroStrain7 *microstrain7;
+
+    // simulated InertialLabs INS
+    SITL::InertialLabs *inertiallabs;
+    
 #if HAL_SIM_JSON_MASTER_ENABLED
     // Ride along instances via JSON SITL backend
     SITL::JSON_Master ride_along;
@@ -204,8 +220,11 @@ public:
     // simulated EFI MegaSquirt device:
     SITL::EFI_MegaSquirt *efi_ms;
 
+    // simulated EFI MegaSquirt device:
+    SITL::EFI_Hirth *efi_hirth;
+
     // output socket for flightgear viewing
-    SocketAPM fg_socket{true};
+    SocketAPM_native fg_socket{true};
     
     const char *defaults_path = HAL_PARAM_DEFAULTS_PATH;
 
