@@ -30,6 +30,7 @@
 #include "AP_TemperatureSensor_MAX31865.h"
 #include "AP_TemperatureSensor_Analog.h"
 #include "AP_TemperatureSensor_DroneCAN.h"
+#include "AP_TemperatureSensor_MLX90614.h"
 
 #include <AP_Logger/AP_Logger.h>
 #include <AP_Vehicle/AP_Vehicle_Type.h>
@@ -201,6 +202,13 @@ void AP_TemperatureSensor::init()
             case AP_TemperatureSensor_Params::Type::DRONECAN:
                 drivers[instance] = new AP_TemperatureSensor_DroneCAN(*this, _state[instance], _params[instance]);
                 break;
+#endif
+#if AP_TEMPERATURE_SENSOR_MLX90614_ENABLED
+            case AP_TemperatureSensor_Params::Type::MLX90614:
+                drivers[instance] = new AP_TemperatureSensor_MLX90614(*this, _state[instance], _params[instance]);
+                break;
+
+
 #endif
             case AP_TemperatureSensor_Params::Type::NONE:
             default:
