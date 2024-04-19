@@ -882,7 +882,7 @@ class AutoTestHelicopter(AutoTestCopter):
         self.set_parameters({
             "AUTOTUNE_AXES": 2,
             "AUTOTUNE_SEQ": 2,
-            "AUTOTUNE_GN_MAX": 2.0,
+            "AUTOTUNE_GN_MAX": 1.8,
             })
 
         # Conduct testing from althold
@@ -902,7 +902,7 @@ class AutoTestHelicopter(AutoTestCopter):
         self.set_parameters({
             "AUTOTUNE_AXES": 1,
             "AUTOTUNE_SEQ": 2,
-            "AUTOTUNE_GN_MAX": 1.8,
+            "AUTOTUNE_GN_MAX": 1.6,
             })
 
         # Conduct testing from althold
@@ -922,7 +922,9 @@ class AutoTestHelicopter(AutoTestCopter):
         self.set_parameters({
             "AUTOTUNE_AXES": 3,
             "AUTOTUNE_SEQ": 4,
-            "AUTOTUNE_GN_MAX": 2.0,
+            "AUTOTUNE_FRQ_MIN": 5,
+            "AUTOTUNE_FRQ_MAX": 50,
+            "AUTOTUNE_GN_MAX": 1.6,
             })
 
         # Conduct testing from althold
@@ -942,6 +944,8 @@ class AutoTestHelicopter(AutoTestCopter):
         self.set_parameters({
             "AUTOTUNE_AXES": 4,
             "AUTOTUNE_SEQ": 7,
+            "AUTOTUNE_FRQ_MIN": 10,
+            "AUTOTUNE_FRQ_MAX": 70,
             "AUTOTUNE_GN_MAX": 2.0,
             })
 
