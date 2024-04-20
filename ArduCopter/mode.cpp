@@ -948,7 +948,13 @@ float Mode::get_pilot_desired_throttle() const
 float Mode::get_avoidance_adjusted_climbrate(float target_rate)
 {
 #if AP_AVOIDANCE_ENABLED
-    AP::ac_avoid()->adjust_velocity_z(pos_control->get_pos_z_p().kP(), pos_control->get_max_accel_z_cmss(), target_rate, G_Dt);
+    AC_Avoid::Action action = AP::ac_avoid()->adjust_velocity_z(pos_control->get_pos_z_p().kP(), pos_control->get_max_accel_z_cmss(), target_rate, G_Dt);
+    if (action == AC_Avoid::Action::Backup) {
+        // Ensure back up action keeps to the climbrate limits of the mode
+        // Apply 50% knock down to ensure backup is not too exciting
+        const float knock_down = 0.5;
+        return constrain_float(target_rate, pos_control->get_max_speed_down_cms() * knock_down, pos_control->get_max_speed_up_cms() * knock_down);
+    }
     return target_rate;
 #else
     return target_rate;
