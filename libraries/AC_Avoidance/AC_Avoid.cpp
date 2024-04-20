@@ -174,7 +174,9 @@ void AC_Avoid::adjust_velocity_fence(float kP, float accel_cmss, Vector3f &desir
     // check for vertical fence
     float desired_velocity_z_cms = desired_vel_cms.z;
     float desired_backup_vel_z = 0.0f;
-    adjust_velocity_z(kP_z, accel_cmss_z, desired_velocity_z_cms, desired_backup_vel_z, dt);
+    if (adjust_velocity_z(kP_z, accel_cmss_z, desired_velocity_z_cms, dt) == Action::Backup) {
+        desired_backup_vel_z = desired_velocity_z_cms;
+    }
 
     // Desired backup velocity is sum of maximum velocity component in each quadrant 
     const Vector2f desired_backup_vel_xy = quad_1_back_vel + quad_2_back_vel + quad_3_back_vel + quad_4_back_vel;
@@ -188,11 +190,11 @@ void AC_Avoid::adjust_velocity_fence(float kP, float accel_cmss, Vector3f &desir
 * kP, accel_cmss are for the horizontal axis
 * kP_z, accel_cmss_z are for vertical axis
 */
-void AC_Avoid::adjust_velocity(Vector3f &desired_vel_cms, bool &backing_up, float kP, float accel_cmss, float kP_z, float accel_cmss_z, float dt)
+AC_Avoid::Action AC_Avoid::adjust_velocity(Vector3f &desired_vel_cms, float kP, float accel_cmss, float kP_z, float accel_cmss_z, float dt)
 {
     // exit immediately if disabled
     if (_enabled == AC_AVOID_DISABLED) {
-        return;
+        return Action::None;
     }
 
     // make a copy of input velocity, because desired_vel_cms might be changed
@@ -224,9 +226,10 @@ void AC_Avoid::adjust_velocity(Vector3f &desired_vel_cms, bool &backing_up, floa
     const float desired_backup_vel_z = back_vel_down + back_vel_up;
     Vector3f desired_backup_vel{desired_backup_vel_xy.x, desired_backup_vel_xy.y, desired_backup_vel_z};
 
+    Action ret = Action::None;
     const float max_back_spd_cms = _backup_speed_max * 100.0f;
     if (!desired_backup_vel.is_zero() && is_positive(max_back_spd_cms)) {
-        backing_up = true;
+        ret = Action::Backup;
         // Constrain backing away speed
         if (desired_backup_vel.length() > max_back_spd_cms) {
             desired_backup_vel = desired_backup_vel.normalized() * max_back_spd_cms;
@@ -260,6 +263,9 @@ void AC_Avoid::adjust_velocity(Vector3f &desired_vel_cms, bool &backing_up, floa
     limit_accel(desired_vel_cms_original, desired_vel_cms, dt);
 
     if (desired_vel_cms_original != desired_vel_cms) {
+        if (ret == Action::None) {
+            ret = Action::Slow;
+        }
         _last_limit_time = AP_HAL::millis();
     }
 
@@ -269,18 +275,20 @@ void AC_Avoid::adjust_velocity(Vector3f &desired_vel_cms, bool &backing_up, floa
         uint32_t now = AP_HAL::millis();
         if ((now - _last_log_ms) > 100) {
             _last_log_ms = now;
-            Write_SimpleAvoidance(true, desired_vel_cms_original, desired_vel_cms, backing_up);
+            Write_SimpleAvoidance(true, desired_vel_cms_original, desired_vel_cms, ret == Action::Backup);
         }
     } else {
         // avoidance isn't active anymore
         // log once so that it registers in logs
         if (_last_log_ms) {
-            Write_SimpleAvoidance(false, desired_vel_cms_original, desired_vel_cms, backing_up);
+            Write_SimpleAvoidance(false, desired_vel_cms_original, desired_vel_cms, ret == Action::Backup);
             // this makes sure logging won't run again till it is active
             _last_log_ms = 0;
         }
     }
 #endif
+
+    return ret;
 }
 
 /*
@@ -330,8 +338,7 @@ void AC_Avoid::adjust_speed(float kP, float accel, float heading, float &speed, 
         0.0f
     };
 
-    bool backing_up  = false;
-    adjust_velocity(vel, backing_up, kP, accel * 100.0f, 0, 0, dt);
+    bool backing_up = adjust_velocity(vel, kP, accel * 100.0f, 0, 0, dt) == Action::Backup;
     const Vector2f vel_xy{vel.x, vel.y};
 
     if (backing_up) {
@@ -354,18 +361,18 @@ void AC_Avoid::adjust_speed(float kP, float accel, float heading, float &speed, 
 }
 
 // adjust vertical climb rate so vehicle does not break the vertical fence
-void AC_Avoid::adjust_velocity_z(float kP, float accel_cmss, float& climb_rate_cms, float& backup_speed, float dt)
+AC_Avoid::Action AC_Avoid::adjust_velocity_z(float kP, float accel_cmss, float& climb_rate_cms, float dt)
 {
 #ifdef AP_AVOID_ENABLE_Z
 
     // exit immediately if disabled
     if (_enabled == AC_AVOID_DISABLED) {
-        return;
+        return Action::None;
     }
     
     // do not adjust climb_rate if level or descending
     if (climb_rate_cms <= 0.0f) {
-        return;
+        return Action::None;
     }
 
     // limit acceleration
@@ -422,15 +429,28 @@ void AC_Avoid::adjust_velocity_z(float kP, float accel_cmss, float& climb_rate_c
         if (alt_diff <= 0.0f) {
             climb_rate_cms = MIN(climb_rate_cms, 0.0f);
             // also calculate backup speed that will get us back to safe altitude
-            backup_speed = -1*(get_max_speed(kP, accel_cmss_limited, -alt_diff*100.0f, dt));
-            return;
+            const float max_back_spd_cms = _backup_speed_max * 100.0f;
+            if (is_positive(max_back_spd_cms)) { 
+                float backup_speed = -1.0 * get_max_speed(kP, accel_cmss_limited, -alt_diff*100.0f, dt);
+
+                // Constrain to max backup speed
+                backup_speed = MAX(backup_speed, -max_back_spd_cms);
+                if (backup_speed < climb_rate_cms) {
+                    // If backup wants to descend faster than the given climb rate allow it.
+                    climb_rate_cms = backup_speed;
+                    return Action::Backup;
+                }
+            }
+            return Action::Slow;
         }
 
         // limit climb rate
         const float max_speed = get_max_speed(kP, accel_cmss_limited, alt_diff*100.0f, dt);
         climb_rate_cms = MIN(max_speed, climb_rate_cms);
+        return Action::Slow;
     }
 # endif
+    return Action::None;
 }
 
 // adjust roll-pitch to push vehicle away from objects

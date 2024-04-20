@@ -44,19 +44,18 @@ public:
     // return true if any avoidance feature is enabled
     bool enabled() const { return _enabled != AC_AVOID_DISABLED; }
 
+    // Return type to pass the action being taken
+    enum class Action {
+        None,
+        Slow,
+        Backup,
+    };
+
     // Adjusts the desired velocity so that the vehicle can stop
     // before the fence/object.
     // kP, accel_cmss are for the horizontal axis
     // kP_z, accel_cmss_z are for vertical axis
-    void adjust_velocity(Vector3f &desired_vel_cms, bool &backing_up, float kP, float accel_cmss, float kP_z, float accel_cmss_z, float dt);
-    void adjust_velocity(Vector3f &desired_vel_cms, float kP, float accel_cmss, float kP_z, float accel_cmss_z, float dt) {
-        bool backing_up = false;
-        adjust_velocity(desired_vel_cms, backing_up, kP, accel_cmss, kP_z, accel_cmss_z, dt);
-    }
-
-    // This method limits velocity and calculates backaway velocity from various supported fences
-    // Also limits vertical velocity using adjust_velocity_z method
-    void adjust_velocity_fence(float kP, float accel_cmss, Vector3f &desired_vel_cms, Vector3f &backup_vel, float kP_z, float accel_cmss_z, float dt);
+    Action adjust_velocity(Vector3f &desired_vel_cms, float kP, float accel_cmss, float kP_z, float accel_cmss_z, float dt);
 
     // adjust desired horizontal speed so that the vehicle stops before the fence or object
     // accel (maximum acceleration/deceleration) is in m/s/s
@@ -67,15 +66,7 @@ public:
     void adjust_speed(float kP, float accel, float heading, float &speed, float dt);
 
     // adjust vertical climb rate so vehicle does not break the vertical fence
-    void adjust_velocity_z(float kP, float accel_cmss, float& climb_rate_cms, float& backup_speed, float dt);
-    void adjust_velocity_z(float kP, float accel_cmss, float& climb_rate_cms, float dt) {
-        float backup_speed = 0.0f;
-        adjust_velocity_z(kP, accel_cmss, climb_rate_cms, backup_speed, dt);
-        if (!is_zero(backup_speed)) {
-            climb_rate_cms = MIN(climb_rate_cms, backup_speed);
-        }
-    }
-    
+    Action adjust_velocity_z(float kP, float accel_cmss, float& climb_rate_cms, float dt);
 
     // adjust roll-pitch to push vehicle away from objects
     // roll and pitch value are in centi-degrees
@@ -104,9 +95,6 @@ public:
      // kP should be non-zero for Copter which has a non-linear response
     float get_max_speed(float kP, float accel_cmss, float distance_cm, float dt) const;
 
-    // return margin (in meters) that the vehicle should stay from objects
-    float get_margin() const { return _margin; }
-
     // return minimum alt (in meters) above which avoidance will be active
     float get_min_alt() const { return _alt_min; }
 
@@ -127,6 +115,10 @@ private:
      * This helps reduce jerks and sudden movements in the vehicle
      */
     void limit_accel(const Vector3f &original_vel, Vector3f &modified_vel, float dt);
+
+    // This method limits velocity and calculates backaway velocity from various supported fences
+    // Also limits vertical velocity using adjust_velocity_z method
+    void adjust_velocity_fence(float kP, float accel_cmss, Vector3f &desired_vel_cms, Vector3f &backup_vel, float kP_z, float accel_cmss_z, float dt);
 
     /*
      * Adjusts the desired velocity for the circular fence.
